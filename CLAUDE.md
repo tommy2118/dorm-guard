@@ -18,15 +18,15 @@ These are project-specific overrides on top of the user's global `~/.claude/CLAU
 
 ## Stack discipline
 
-- **Rails 8 defaults, no deviations without a reason.** SQLite, Solid Queue/Cache/Cable, Propshaft, Hotwire, Kamal, Minitest. If you reach for Postgres, Sidekiq, RSpec, or Webpack, you're fighting the framework — surface that and ask first.
-- **Test framework: Minitest.** Yes, even though the user's global file leans Sandi/Metz/RSpec habits. On this repo, consistency-with-Rails-defaults beats personal RSpec preference.
-- **Composition over inheritance, Tell Don't Ask, Sandi's rules** — all still in force, just in Minitest syntax.
+- **Rails 8 defaults, no deviations without a reason.** SQLite, Solid Queue/Cache/Cable, Propshaft, Hotwire, Kamal. If you reach for Postgres, Sidekiq, or Webpack, you're fighting the framework — surface that and ask first.
+- **Test framework: RSpec** (`rspec-rails`). This is an explicit deviation from the Rails 8 Minitest default — chosen mid-bootstrap because the user's broader workflow (Sandi Metz / GOOS / mockist TDD) is more fluent in RSpec. Specs live in `spec/`, not `test/`. CI runs `bundle exec rspec`, not `bin/rails test`.
+- **Composition over inheritance, Tell Don't Ask, Sandi's rules** — all still in force, now in RSpec syntax (`describe`, `context`, `it`, `expect(...).to`).
 
 ## Slice and commit cadence
 
 - Slices come from `~/.claude/plans/parallel-wandering-crown.md`. Each slice = one commit on a feature branch = one `agent-notes` YAML.
 - A slice is too big when you can't summarize its `intent` in one sentence. Re-split.
-- Tests green at the end of every slice. Run `bin/dc bin/rails test` before committing — *inside the container*.
+- Tests green at the end of every slice. Run `bin/dc bundle exec rspec` before committing — *inside the container*.
 - The plan file's `## Slices` section is the source of truth for `agent-notes`'s slice number.
 
 ## When in doubt

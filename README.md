@@ -28,7 +28,7 @@ docker compose -f .devcontainer/compose.yaml up -d --build
 # Run any command inside the container
 bin/dc bundle install
 bin/dc bin/rails db:prepare
-bin/dc bin/rails test
+bin/dc bundle exec rspec    # run the test suite (RSpec)
 bin/dc bin/rails server     # → http://localhost:3000
 bin/dc bin/jobs             # Solid Queue worker
 bin/dc bash                 # interactive shell

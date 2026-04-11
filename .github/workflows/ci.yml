@@ -68,12 +68,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    # services:
-    #  redis:
-    #    image: valkey/valkey:8
-    #    ports:
-    #      - 6379:6379
-    #    options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - name: Install packages
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libvips
@@ -86,22 +80,16 @@ jobs:
         with:
           bundler-cache: true
 
-      - name: Run tests
+      - name: Run RSpec (non-system specs)
         env:
           RAILS_ENV: test
-          # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
-          # REDIS_URL: redis://localhost:6379/0
-        run: bin/rails db:test:prepare test
+        run: |
+          bin/rails db:test:prepare
+          bundle exec rspec --exclude-pattern "spec/system/**/*_spec.rb"
 
   system-test:
     runs-on: ubuntu-latest
 
-    # services:
-    #  redis:
-    #    image: valkey/valkey:8
-    #    ports:
-    #      - 6379:6379
-    #    options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - name: Install packages
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libvips
@@ -114,12 +102,15 @@ jobs:
         with:
           bundler-cache: true
 
-      - name: Run System Tests
+      - name: Run system specs
         env:
           RAILS_ENV: test
-          # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
-          # REDIS_URL: redis://localhost:6379/0
-        run: bin/rails db:test:prepare test:system
+        run: |
+          bin/rails db:test:prepare
+          # --pattern restricts to system specs only. When spec/system is empty or
+          # missing, rspec exits 0 with "No examples found" — so this job stays green
+          # until the first system spec lands (planned for Epic 1 slice 7).
+          bundle exec rspec --pattern "spec/system/**/*_spec.rb"
 
       - name: Keep screenshots from failed system tests
         uses: actions/upload-artifact@v4
