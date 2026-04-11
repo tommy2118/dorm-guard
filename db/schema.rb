@@ -10,5 +10,14 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 0) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_11_235013) do
+  create_table "sites", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "interval_seconds", null: false
+    t.datetime "last_checked_at"
+    t.string "name", null: false
+    t.integer "status", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.string "url", null: false
+  end
 end
