@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# bin/dc — run a command inside the dev container.
+#
+# All Ruby/Rails tooling on dorm-guard runs in the .devcontainer image, never
+# against the host. This wrapper saves the long `docker compose exec` invocation.
+#
+# Usage:
+#   bin/dc rails test            # run the test suite
+#   bin/dc rails console         # open a console
+#   bin/dc bash                  # interactive shell in the container
+#   bin/dc bundle install        # install gems
+#
+# The container must already be running. Start it with:
+#   docker compose -f .devcontainer/compose.yaml up -d
+
+set -euo pipefail
+
+COMPOSE_FILE=".devcontainer/compose.yaml"
+SERVICE="rails-app"
+WORKDIR="/workspaces/dorm_guard"
+USER_NAME="vscode"
+
+if [ "$#" -eq 0 ]; then
+  set -- bash
+fi
+
+# -T disables TTY allocation so this works in CI / non-interactive contexts.
+# Drop -T when stdin is a tty so `bin/dc rails console` etc. behave normally.
+TTY_FLAG="-T"
+if [ -t 0 ] && [ -t 1 ]; then
+  TTY_FLAG=""
+fi
+
+exec docker compose -f "$COMPOSE_FILE" exec $TTY_FLAG -u "$USER_NAME" -w "$WORKDIR" "$SERVICE" "$@"
