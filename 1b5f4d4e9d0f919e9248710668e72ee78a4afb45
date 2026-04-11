@@ -1,0 +1,71 @@
+intent: >
+  Introduce the Site model — the data shape every Epic 1 slice builds on.
+  Codifies URL format, interval floor, and the unknown/up/down status enum.
+
+slice: 1/8
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+# Adds a migration + new table. `git revert` alone won't drop the sites
+# table — a rollback needs a down migration or manual DROP TABLE.
+
+scope:
+  declared:
+    - app/models/site.rb
+    - db/migrate/*_create_sites.rb
+    - db/schema.rb
+    - spec/models/site_spec.rb
+  actual:
+    - app/models/site.rb
+    - db/migrate/20260411235013_create_sites.rb
+    - db/schema.rb
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec spec/models/site_spec.rb
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/models/site.rb spec/models/site_spec.rb db/migrate/20260411235013_create_sites.rb
+  result: clean
+  count: 0
+
+assumptions:
+  - "30s minimum check interval is the right product floor for an MVP (chosen to keep noise down; easy to lower later)."
+  - "URI::DEFAULT_PARSER regex is sufficient URL validation for slice 1. It is permissive (accepts http://foo with no TLD). Tightening is deferred to slice 3 where HttpChecker actually fetches."
+  - "Default status `:unknown` is the right initial state (as opposed to nil or `unchecked`) — makes the flip-event semantics in slice 4 cleaner."
+  - "Plan's slice-1 file list originally omitted db/schema.rb; corrected mid-slice so scope.declared stays honest. Any migration slice implicitly touches schema.rb."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Chose URI::DEFAULT_PARSER.make_regexp over a hand-rolled host/scheme
+  parser because (a) it's stdlib, (b) tightening is a slice-3 problem
+  where SSRF risk actually bites, (c) over-validating at the model
+  layer would push reviewers to argue about regexes instead of the
+  data shape.
+
+self_review:
+  error_paths: >
+    URL regex is permissive — `http://foo` passes. Conscious punt: the
+    fetch layer in slice 3 is where the real validation (resolvable host,
+    non-private address, scheme whitelist against SSRF) belongs. Model-
+    layer validation is a typo gate, not a security boundary.
+  security: >
+    Site.url is user-supplied and will be fetched by HttpChecker in slice
+    3. SSRF risk (private-range hosts, link-local, cloud metadata endpoints)
+    exists but is not addressed at the model. Flag for slice-3 reviewer
+    attention — this is where the check belongs.
+
+confidence: high
+
+reviewer_attention:
+  - app/models/site.rb:8-11  # URL regex choice — revisit in slice 3
