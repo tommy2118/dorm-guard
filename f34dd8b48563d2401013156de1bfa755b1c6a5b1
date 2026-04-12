@@ -1,0 +1,125 @@
+intent: >
+  Bring the alert path online end-to-end. DowntimeAlertMailer fires
+  via .deliver_later when PerformCheckJob detects a fresh flip to down.
+  letter_opener_web makes the result visible in dev without configuring
+  SMTP. This is the slice that turns "we record check results" into
+  "we tell you when your site goes down."
+
+slice: 5/8
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+# New code only, no schema, no migration. Gemfile + dev config changes
+# revert cleanly. No external state touched.
+
+scope:
+  declared:
+    - app/mailers/downtime_alert_mailer.rb
+    - app/views/downtime_alert_mailer/site_down.html.erb
+    - app/views/downtime_alert_mailer/site_down.text.erb
+    - spec/mailers/downtime_alert_mailer_spec.rb
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - Gemfile
+    - Gemfile.lock
+    - config/environments/development.rb
+    - config/routes.rb
+  actual:
+    - app/mailers/downtime_alert_mailer.rb
+    - app/views/downtime_alert_mailer/site_down.html.erb
+    - app/views/downtime_alert_mailer/site_down.text.erb
+    - spec/mailers/downtime_alert_mailer_spec.rb
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - Gemfile
+    - Gemfile.lock
+    - config/environments/development.rb
+    - config/routes.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/mailers/downtime_alert_mailer_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/mailers/downtime_alert_mailer.rb spec/mailers/downtime_alert_mailer_spec.rb app/jobs/perform_check_job.rb spec/jobs/perform_check_job_spec.rb config/environments/development.rb config/routes.rb Gemfile
+  result: clean
+  count: 0
+
+assumptions:
+  - "Recipient comes from ENV['DORM_GUARD_ALERT_TO'] with a fallback to alerts@dorm-guard.local. The .local TLD is a deliberate trip-wire — anything actually trying to deliver to it will fail loudly, which is what we want when production forgets to set the env var."
+  - "Alert email mentions only the site (name + URL), not the failing CheckResult. The failure detail belongs on the dashboard (slice 7), not in an email body that has to render in 10 different mail clients. Keeping the email sparse also dodges the need to expose has_many :check_results from this slice."
+  - "Flip detection rule: previous_status was anything-but-down AND current status is down. This means unknown→down fires the first-ever alert and up→down fires on regression, while down→down stays silent (no spam) and down→up stays silent (no recovery emails this slice). Recovery emails are a future concern."
+  - ".deliver_later, not .deliver_now. Mail goes through ActiveJob → Solid Queue, so a slow SMTP server can't block PerformCheckJob's transaction-bracketing or the rest of its work. Cost: an extra job per flip-to-down, which is a price worth paying for keeping the check loop snappy."
+  - "letter_opener_web is mounted under `if Rails.env.development?`, so the route doesn't leak into the production routing table or cause boot warnings in test."
+  - "DowntimeAlertMailer is enqueued in the job spec via rspec-rails' have_enqueued_mail matcher. We do NOT mock the mailer — the matcher inspects ActiveJob's test queue, which means we're asserting the real side effect (a job got enqueued with the right params), not stubbing the contract we're trying to verify."
+
+deviations_from_plan: >
+  Plan originally said slice 4 should "enqueue DowntimeAlertJob on a
+  up→down flip" and slice 5 should be the mailer. The flip enqueue
+  was deferred from slice 4 to here (documented in slice 4's note).
+  No DowntimeAlertJob was created — Rails' .deliver_later already
+  hands off to ActiveJob, so a separate job class would be a wrapper
+  around the mailer that adds nothing.
+
+trade_offs: >
+  notify_if_newly_down runs OUTSIDE the persistence transaction.
+  Considered the alternative — wrapping the mailer enqueue inside the
+  same transaction so an enqueue failure would roll back the
+  CheckResult — and rejected it: losing an alert is recoverable
+  (operator can see "down" on the dashboard within a minute), losing
+  the check history is not. Atomicity over the wrong boundary is
+  worse than no atomicity. Surfaced the ordering choice in the
+  reviewer_attention pointers.
+
+self_review:
+  consistency: >
+    First mailer in the repo. Sets the pattern: ENV-fetched recipient
+    with a sentinel default, sparse parallel html+text views, mailer
+    parameters via .with(...) (the modern Rails idiom), .deliver_later
+    at every call site. Future mailers should follow this shape or
+    consciously diverge.
+  metz: >
+    `perform` stayed at 5 body lines by extracting `notify_if_newly_down`.
+    `notify_if_newly_down` is 4 lines, clean. `record_check` is still
+    7 physical lines from slice 4 (5-keyword create!) — same edge case
+    as before, not regressed by this slice.
+  mocking: >
+    HttpChecker remains mocked at the seam in the job spec (we own it).
+    DowntimeAlertMailer is NOT mocked — `have_enqueued_mail` matches
+    against the real ActiveJob test queue, so we're asserting the
+    actual side effect, not stubbing the thing we want to verify.
+  error_paths: >
+    Mailer enqueue runs OUTSIDE the persistence transaction, on
+    purpose. If `deliver_later` raises (serialization, queue down,
+    etc.), the CheckResult and Site.status update still commit. We'd
+    rather lose an alert (operator can see "down" on the dashboard
+    within a minute) than lose check history. Trade-off explicit, not
+    incidental.
+  security: >
+    @site.name is interpolated into the email subject. Mail::Field
+    sanitizes header values, so even an adversarial site name like
+    "Example\r\nBcc: attacker@evil.com" cannot inject headers. Checked
+    + mitigated by the framework, but worth flagging because the
+    mitigation is implicit. If we ever build the subject manually or
+    bypass mail()'s header construction, this protection goes away.
+  api: >
+    DowntimeAlertMailer.site_down is a new public mailer action, called
+    from one place (PerformCheckJob#notify_if_newly_down). If a future
+    "site recovered" mailer lands, it should follow the same shape:
+    one action per event, .with(site:) params, deliver_later from the
+    job that detects the transition.
+
+confidence: high
+
+reviewer_attention:
+  - app/jobs/perform_check_job.rb:8-9      # notify call OUTSIDE the transaction — atomicity boundary decision
+  - app/jobs/perform_check_job.rb:45-50    # the flip-detection rule itself (the truth table)
+  - app/mailers/downtime_alert_mailer.rb:6 # ENV.fetch recipient with sentinel default
