@@ -40,6 +40,10 @@ Rails.application.configure do
   # Set localhost to be used by links generated in mailer templates.
   config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
 
+  # Solid Queue needs to know which database to connect to. Production.rb has
+  # this; development needs it too now that we have a separate queue DB.
+  config.solid_queue.connects_to = { database: { writing: :queue } }
+
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
 
