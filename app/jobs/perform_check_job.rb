@@ -3,14 +3,20 @@ class PerformCheckJob < ApplicationJob
 
   def perform(site_id)
     site = Site.find(site_id)
+    previous_status = site.status
     result = HttpChecker.check(site.url)
+    apply_result(site, result)
+    notify_if_newly_down(site, previous_status)
+  end
+
+  private
+
+  def apply_result(site, result)
     site.transaction do
       record_check(site, result)
       update_site(site, result)
     end
   end
-
-  private
 
   def record_check(site, result)
     CheckResult.create!(
@@ -33,5 +39,12 @@ class PerformCheckJob < ApplicationJob
     return :down if result.error_message.present?
 
     result.status_code.between?(200, 399) ? :up : :down
+  end
+
+  def notify_if_newly_down(site, previous_status)
+    return unless site.down?
+    return if previous_status == "down"
+
+    DowntimeAlertMailer.with(site: site).site_down.deliver_later
   end
 end

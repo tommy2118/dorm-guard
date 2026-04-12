@@ -65,6 +65,10 @@ end
 group :development do
   # Use console on exceptions pages [https://github.com/rails/web-console]
   gem "web-console"
+
+  # Captures outbound mail and serves a web UI at /letter_opener so we can
+  # eyeball ActionMailer output without configuring SMTP locally.
+  gem "letter_opener_web", "~> 3.0"
 end
 
 group :test do

@@ -40,6 +40,11 @@ Rails.application.configure do
   # Set localhost to be used by links generated in mailer templates.
   config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
 
+  # Capture outbound mail with letter_opener_web instead of trying to deliver it.
+  # The web UI is mounted at /letter_opener (see config/routes.rb).
+  config.action_mailer.delivery_method = :letter_opener_web
+  config.action_mailer.perform_deliveries = true
+
   # Solid Queue needs to know which database to connect to. Production.rb has
   # this; development needs it too now that we have a separate queue DB.
   config.solid_queue.connects_to = { database: { writing: :queue } }
