@@ -11,4 +11,8 @@ class Site < ApplicationRecord
   validates :interval_seconds,
             presence: true,
             numericality: { only_integer: true, greater_than_or_equal_to: MIN_INTERVAL_SECONDS }
+
+  def due?
+    last_checked_at.nil? || last_checked_at <= interval_seconds.seconds.ago
+  end
 end

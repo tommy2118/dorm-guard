@@ -69,4 +69,26 @@ RSpec.describe Site, type: :model do
       expect(site).to be_down
     end
   end
+
+  describe "#due?" do
+    it "is true when the site has never been checked" do
+      site = described_class.new(valid_attrs.merge(last_checked_at: nil))
+      expect(site).to be_due
+    end
+
+    it "is true when last_checked_at is older than interval_seconds" do
+      site = described_class.new(valid_attrs.merge(last_checked_at: 90.seconds.ago))
+      expect(site).to be_due
+    end
+
+    it "is false when last_checked_at is within interval_seconds" do
+      site = described_class.new(valid_attrs.merge(last_checked_at: 30.seconds.ago))
+      expect(site).not_to be_due
+    end
+
+    it "is true at the exact boundary" do
+      site = described_class.new(valid_attrs.merge(last_checked_at: 60.seconds.ago))
+      expect(site).to be_due
+    end
+  end
 end
