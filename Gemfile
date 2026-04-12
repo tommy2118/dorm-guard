@@ -40,6 +40,11 @@ gem "thruster", require: false
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 gem "image_processing", "~> 1.2"
 
+# Outbound HTTP client for HttpChecker and any future external integrations.
+# Preferred over stdlib Net::HTTP for middleware support (retries, logging,
+# instrumentation), pluggable adapters, and a narrower exception hierarchy.
+gem "faraday", "~> 2.0"
+
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
@@ -66,4 +71,8 @@ group :test do
   # Use system testing [https://guides.rubyonrails.org/testing.html#system-testing]
   gem "capybara"
   gem "selenium-webdriver"
+
+  # Stubs external HTTP at the Net::HTTP layer so HttpChecker specs never
+  # hit the real network.
+  gem "webmock"
 end
