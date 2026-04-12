@@ -1,0 +1,88 @@
+intent: >
+  Turn "I can manually run a check" into "checks run automatically
+  every 60s for any due Site." The recurring scheduler + Site#due?
+  close the loop so the uptime monitor actually monitors.
+
+slice: 6/8
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+# New code + config only. No schema. Removing the recurring.yml entry
+# stops the scheduler; reverting the code removes the jobs.
+
+scope:
+  declared:
+    - app/jobs/schedule_due_checks_job.rb
+    - spec/jobs/schedule_due_checks_job_spec.rb
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+    - config/recurring.yml
+  actual:
+    - app/jobs/schedule_due_checks_job.rb
+    - spec/jobs/schedule_due_checks_job_spec.rb
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+    - config/recurring.yml
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/jobs/schedule_due_checks_job_spec.rb
+    - spec/models/site_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/models/site.rb app/jobs/schedule_due_checks_job.rb spec/models/site_spec.rb spec/jobs/schedule_due_checks_job_spec.rb
+  result: clean
+  count: 0
+
+assumptions:
+  - "60s scheduler tick is coarse enough for an MVP. A site with interval_seconds: 30 won't fire exactly every 30s — it will fire on the next tick after it becomes due (worst case ~59s late). Acceptable because we don't promise sub-second accuracy. Tighter ticks mean more DB scans for diminishing returns."
+  - "find_each (batched iteration) is fine for the MVP's small site count. At scale, this becomes a SQL-driven WHERE clause or a per-site recurring entry rather than a Ruby loop. Flagged as a known scaling wall, not a bug."
+  - "has_many :check_results on Site is still NOT needed — the scheduler only reads site.last_checked_at (a column on sites), not site.check_results. Deferred to slice 7 if the index view needs the latest check detail."
+  - "due? uses <= (inclusive) at the boundary so a site whose interval is exactly 60s and was last checked exactly 60s ago IS due. The alternative (strict <) would cause a one-tick delay at the boundary — a 60s-interval site checked at T would not be due at T+60, only at T+61+."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Scheduler iterates ALL sites in Ruby instead of using a SQL WHERE
+  clause. The Ruby approach is simpler, more readable, and keeps
+  the due-check logic in one place (Site#due?) rather than duplicating
+  it in both a scope and a method. At scale it becomes O(N) where N
+  is total sites, not just due sites — but for an MVP N is in the
+  dozens, not the millions. When N grows, extract a Site.due scope
+  that pushes the interval arithmetic into SQL. The method is the
+  single source of truth for now; the scope would need to mirror it.
+
+self_review:
+  consistency: >
+    Second job in the repo (after PerformCheckJob). Same pattern:
+    queue_as :default, find the things, delegate the work. Clean match.
+  metz: >
+    ScheduleDueChecksJob#perform is 3 body lines. Site#due? is 2 lines.
+    Both well within Sandi's limits. No violations introduced.
+  error_paths: >
+    If find_each raises mid-iteration (e.g., DB connection lost), some
+    sites get enqueued and some don't. Solid Queue will re-run the
+    scheduler on the next tick, which will re-enqueue the missed sites
+    (and possibly double-enqueue the already-enqueued ones — but
+    PerformCheckJob is idempotent enough for the MVP). Not locked, not
+    transactional, but naturally self-healing at the cost of possible
+    double-checks in the failure window.
+  performance: >
+    find_each batches by default (1000 per batch), which is correct for
+    future growth but irrelevant for the MVP's handful of sites. The
+    real scaling concern is the Ruby-loop-over-all-sites pattern, which
+    is documented in trade_offs above.
+
+confidence: high
+
+reviewer_attention:
+  - app/models/site.rb:16-18                  # due? — the boundary-inclusive <= decision
+  - config/recurring.yml:7-9                   # dev recurring entry — "every minute" tick rate
