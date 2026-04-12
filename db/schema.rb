@@ -10,7 +10,19 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_11_235013) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_12_000212) do
+  create_table "check_results", force: :cascade do |t|
+    t.datetime "checked_at", null: false
+    t.datetime "created_at", null: false
+    t.text "error_message"
+    t.integer "response_time_ms", null: false
+    t.integer "site_id", null: false
+    t.integer "status_code"
+    t.datetime "updated_at", null: false
+    t.index ["site_id", "checked_at"], name: "index_check_results_on_site_id_and_checked_at", order: { checked_at: :desc }
+    t.index ["site_id"], name: "index_check_results_on_site_id"
+  end
+
   create_table "sites", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "interval_seconds", null: false
@@ -20,4 +32,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_11_235013) do
     t.datetime "updated_at", null: false
     t.string "url", null: false
   end
+
+  add_foreign_key "check_results", "sites"
 end
