@@ -1,0 +1,105 @@
+intent: >
+  Wire HttpChecker into a Solid Queue background job that persists a
+  CheckResult and transitions Site.status atomically. The 2xx/3xx → up,
+  everything-else → down policy lands in this slice — where it belongs,
+  not in the HTTP layer.
+
+slice: 4/8
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+# New code only, no schema, no external state. `git revert` cleanly undoes.
+
+scope:
+  declared:
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+  actual:
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/jobs/perform_check_job_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/jobs/perform_check_job.rb spec/jobs/perform_check_job_spec.rb
+  result: clean
+  count: 0
+
+assumptions:
+  - "perform takes site_id (integer), not a Site record. Solid Queue serializes the smaller payload and retries always re-fetch a fresh row."
+  - "Up/down policy: 2xx and 3xx → up, 4xx and 5xx → down, transport error → down. 4xx is the most arguable bucket — chose 'down' because a 404 on the URL you're monitoring means the page is gone, which IS a downtime event for an uptime monitor. Easy to revisit per-site if the MVP shows it to be wrong."
+  - "Persistence + status update are wrapped in a Site#transaction so a failed status update rolls back the CheckResult, never leaving an orphan check row."
+  - "CheckResult creation goes through the foreign key (`CheckResult.create!(site: ..)`) rather than through `site.check_results.create!`, so `has_many :check_results` on Site stays deferred until a *reader* needs it (slice 6 or 7). This is consistent with slice 2's policy."
+  - "HttpChecker is contractually responsible for not raising — its public API rescues Faraday::Error and URI::InvalidURIError. If something else does escape, the job lets it bubble up to Solid Queue's retry logic rather than swallowing it."
+
+deviations_from_plan: >
+  Plan said this slice should "enqueue DowntimeAlertJob on a up→down
+  flip." There is no DowntimeAlertJob (slice 5's deliverable is
+  DowntimeAlertMailer, not a job). Splitting the alert plumbing across
+  two slices would mean wiring a stub in slice 4 that gets replaced one
+  commit later — pure ceremony. Slice 5 will add the mailer AND the
+  flip-detection hook in PerformCheckJob in one shippable unit. Plan
+  has been updated.
+
+trade_offs: >
+  Considered moving derive_status onto HttpChecker::Result as `up?`,
+  which would push the policy onto the value object. Rejected because
+  it tangles HTTP truth (the Result's job) with product policy (the
+  job's job). Keeping them apart means we can change "what counts as
+  down" without touching fetch code.
+
+self_review:
+  consistency: >
+    First background job in the repo. Sets the pattern: `perform`
+    takes a primary key, side effects wrap in a transaction, the
+    actual work delegates to private helper methods. Future jobs
+    should match this shape or consciously diverge.
+  metz: >
+    `record_check` is 7 physical lines because CheckResult.create!
+    has 5 keyword args. Same edge-case violation as HttpChecker's
+    success_result/error_result (slice 3) — accepted because the
+    alternatives are worse (positional create! loses readability,
+    inlined into perform makes that method 12+ lines).
+  mocking: >
+    Canonical "mock at the seam" example. HttpChecker is mocked
+    because we own it (not webmock-stubbing Net::HTTP this time).
+    The job spec controls what HttpChecker returns and asserts the
+    job's resulting side effects. Slice 3's spec covers the actual
+    HTTP behavior — no need to re-verify here.
+  error_paths: >
+    Concurrent runs of PerformCheckJob for the same Site are not
+    locked. Both will create CheckResults (independent rows, no
+    corruption) and both will update Site.status (last write wins).
+    For the MVP this is acceptable: slice 6's scheduler should not
+    enqueue overlapping runs because it filters by last_checked_at.
+    If we ever see a real race, an advisory lock on Site.id at the
+    top of perform is the natural fix. Flagged here so the reviewer
+    isn't surprised by the missing lock.
+  feature_envy: >
+    derive_status arguably belongs on HttpChecker::Result (as `up?`).
+    Deliberate kept on the job: HTTP truth (Result's responsibility)
+    should not be tangled with product policy (the job's
+    responsibility). Cross-layer cohesion beats single-object
+    convenience here.
+  api: >
+    New public API: PerformCheckJob.perform_now(site_id) and
+    .perform_later(site_id). Slice 6's scheduler will be the only
+    caller. The integer-ID-only signature is a soft semver boundary
+    — changing it to take a Site record or extra args would break
+    the scheduler.
+
+confidence: high
+
+reviewer_attention:
+  - app/jobs/perform_check_job.rb:31-35  # the up/down policy — the most product-shaped decision in the slice
+  - app/jobs/perform_check_job.rb:7-10   # the transaction wrapper — atomicity guarantee
