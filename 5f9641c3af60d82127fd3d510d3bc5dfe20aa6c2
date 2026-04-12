@@ -1,0 +1,76 @@
+intent: >
+  Add CheckResult, the one-measurement-per-check data shape. Introduces
+  the belongs_to-Site link and the (site_id, checked_at desc) index that
+  slices 6 and 7 will read from.
+
+slice: 2/8
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+# Adds a migration + new table + foreign key + index. Revert alone won't
+# drop the table or the FK constraint.
+
+scope:
+  declared:
+    - app/models/check_result.rb
+    - db/migrate/*_create_check_results.rb
+    - db/schema.rb
+    - spec/models/check_result_spec.rb
+  actual:
+    - app/models/check_result.rb
+    - db/migrate/20260412000212_create_check_results.rb
+    - db/schema.rb
+    - spec/models/check_result_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/check_result_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/models/check_result.rb spec/models/check_result_spec.rb db/migrate/20260412000212_create_check_results.rb
+  result: clean
+  count: 0
+
+assumptions:
+  - "status_code + error_message are both optional at the model layer. The mutual-exclusion business rule (exactly one of the two is populated) is HttpChecker's responsibility in slice 3, where the failure-mode taxonomy is actually designed."
+  - "response_time_ms is required because even a failed fetch has a measured duration (time until the error was raised), and making it nullable would push the branching into every reader."
+  - "No numericality / range validation on response_time_ms — the only caller will be HttpChecker and the DB enforces integer typing. Adding `numericality: { greater_than_or_equal_to: 0 }` at the model layer is YAGNI until there's a real pathway that could violate it."
+  - "The compound index orders checked_at DESC because every intended reader (scheduler in slice 6, index view in slice 7) wants the most-recent row first. A plain ascending index would be cheaper to write but an extra sort on every read."
+  - "has_many :check_results on Site is deliberately not added. belongs_to works without it, and the reverse side only becomes load-bearing when slice 6 or 7 actually queries site.check_results — adding it now is speculative generality."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Descending compound index vs ascending. Chose DESC to optimize the
+  hot read path ("latest check for this site") at the cost of slightly
+  more work on write. For an MVP that checks sites on a 30s+ cadence,
+  writes are rare enough that this is a free choice; at high write
+  volume the tradeoff would want revisiting.
+
+self_review:
+  error_paths: >
+    Model-layer validation is permissive on oddball values (negative
+    response_time_ms, future checked_at, status_code outside 100..599).
+    Conscious punt: the only caller is HttpChecker, which will produce
+    these values from actual HTTP exchanges. Enforcing "sane ranges" at
+    the model layer is defensive programming against a caller that
+    doesn't exist yet.
+  performance: >
+    (site_id, checked_at DESC) compound index chosen deliberately. Makes
+    slice 6 ("site's last check") and slice 7 ("latest status per site
+    in the index view") cheap index seeks instead of full scans or
+    in-memory sorts. Worth calling out because every subsequent slice
+    assumes this index exists.
+
+confidence: high
+
+reviewer_attention:
+  - db/migrate/20260412000212_create_check_results.rb:13  # the DESC compound index
