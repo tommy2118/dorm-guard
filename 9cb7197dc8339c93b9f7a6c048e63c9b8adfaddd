@@ -1,0 +1,113 @@
+intent: >
+  Introduce HttpChecker, the single-responsibility HTTP fetch boundary.
+  Wraps Faraday with tight timeouts, normalizes success/failure into an
+  immutable Result value object, and sets the seam that slice 4 will
+  consume.
+
+slice: 3/8
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+# No schema, no external state, no existing callers. `git revert` fully
+# undoes the slice; the migration for CheckResult from slice 2 stays put.
+
+scope:
+  declared:
+    - app/services/http_checker.rb
+    - spec/services/http_checker_spec.rb
+    - Gemfile
+    - Gemfile.lock
+    - spec/rails_helper.rb
+  actual:
+    - app/services/http_checker.rb
+    - spec/services/http_checker_spec.rb
+    - Gemfile
+    - Gemfile.lock
+    - spec/rails_helper.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/http_checker_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/services/http_checker.rb spec/services/http_checker_spec.rb Gemfile spec/rails_helper.rb
+  result: clean
+  count: 0
+
+assumptions:
+  - "Faraday's default adapter (faraday-net_http) is fine for MVP load. Concurrency-heavy workloads can swap to faraday-typhoeus or faraday-httpx without touching HttpChecker's public API."
+  - "5s open / 10s read timeout is tight enough to keep one slow site from starving a worker, loose enough to not false-positive on healthy-but-slow sites. Adjustable via constants if the MVP shows them to be wrong."
+  - "rescue Faraday::Error + URI::InvalidURIError is a complete list of recoverable failure modes for a single GET. Anything else (NoMethodError, ArgumentError, SystemStackError) is a programmer bug and should crash the worker, not be silently converted to an error Result."
+  - "4xx and 5xx responses are not failures at the checker layer — they are valid HTTP outcomes. Interpretation of 'does this status count as down' is PerformCheckJob's job in slice 4, because the policy is product-shaped, not HTTP-shaped."
+  - "checked_at captures the START time of the check so slice 6's due-site query (`last_checked_at < interval_seconds.ago`) has the natural semantics. End-time would cause drift on long checks."
+  - "Stubbing HTTP with webmock (intercepting at the Net::HTTP layer) is accepted practice with Faraday even though we technically 'don't own' Net::HTTP. webmock is a dedicated HTTP interception library, not a generic mock — it's the Ruby ecosystem default and preferable to hand-rolling a Faraday::Adapter::Test setup for slice 3's fetch count."
+
+deviations_from_plan: >
+  Mid-slice pivot from stdlib Net::HTTP to Faraday after reviewer
+  feedback ("We should be using Faraday, no?"). Plan originally said
+  "stdlib Net::HTTP (no gem dep)"; reversed because the middleware +
+  adapter + exception-hierarchy wins dominate the one-fewer-gem
+  argument for a production-grade monitor. Plan has been updated for
+  future slices.
+
+trade_offs: >
+  Faraday adds a gem and a tiny indirection layer. The win is that
+  every capability we might want in later slices (retries, metrics,
+  request logging, circuit breakers, parallel fetches) is already a
+  middleware away. With Net::HTTP each of those would be a bespoke
+  rewrite of the checker. Trading one dependency for
+  future-rewriting-yourself-out-of-stdlib is an obviously good deal.
+
+self_review:
+  metz: >
+    `success_result` and `error_result` are 6 physical body lines each
+    because Result.new has 4 keyword args. This bends Sandi's 5-line
+    rule. Inlining into `check` would make that method 14 lines (worse);
+    compacting into positional Data.new loses readability. Accepted the
+    edge-case violation over worse alternatives.
+  mocking: >
+    webmock intercepts at Net::HTTP (the underlying adapter Faraday uses
+    by default). That's technically "mocking a type we don't own" but
+    webmock is a specialized HTTP library, not a test double, and it's
+    the de facto Ruby approach. Deliberate, not accidental.
+  error_paths: >
+    rescue is intentionally narrow: Faraday::Error (which covers DNS,
+    timeouts, refused, TLS, protocol errors) + URI::InvalidURIError (for
+    malformed URLs that bypass Site validation). Any other exception is
+    a programmer bug and should bubble up, not be silently swallowed
+    into an error Result.
+  security: >
+    SSRF risk is now REAL. HttpChecker will fetch any URL, including
+    169.254.169.254 (AWS metadata), private ranges (10/8, 192.168/16,
+    172.16/12), and loopback. For the single-user MVP this is a
+    self-inflicted risk. When multi-user lands (future epic), a
+    host-allowlist / private-range block belongs HERE, in HttpChecker,
+    NOT in the Site model. Flagged in slice 1's note; this is where the
+    fix would go. Explicitly deferred from this slice.
+  api: >
+    New public API: HttpChecker.check(url) → HttpChecker::Result. Result
+    is an immutable Data class with 4 fields (status_code,
+    response_time_ms, error_message, checked_at). Slice 4 will consume
+    this shape directly, so changes to Result are effectively a mini-
+    semver boundary from this slice onward.
+  consistency: >
+    First service object in the repo. Sets the pattern for future
+    service objects: stateless class method entry point, private instance
+    helpers, immutable Data result, narrow rescue list. Worth flagging
+    because every future service object should either follow this shape
+    or consciously diverge.
+
+confidence: high
+
+reviewer_attention:
+  - app/services/http_checker.rb:18       # narrow rescue clause; the alternative of `rescue StandardError` is the biggest tradeoff
+  - app/services/http_checker.rb:24-28    # Faraday connection config; middleware chain lives here in later slices
+  - spec/rails_helper.rb:5-14             # disable_net_connect safety net; affects every spec in the suite
