@@ -1,0 +1,91 @@
+intent: >
+  Give the monitoring system a visible surface. GET /sites (and the root
+  route) renders a dashboard table with name, URL, status badge, and
+  relative last-checked timestamp for every monitored site.
+
+slice: 7/8
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/controllers/sites_controller.rb
+    - app/views/sites/index.html.erb
+    - app/views/sites/_status_badge.html.erb
+    - spec/requests/sites_spec.rb
+    - config/routes.rb
+  actual:
+    - app/controllers/sites_controller.rb
+    - app/views/sites/index.html.erb
+    - app/views/sites/_status_badge.html.erb
+    - spec/requests/sites_spec.rb
+    - config/routes.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/requests/sites_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop app/controllers/sites_controller.rb spec/requests/sites_spec.rb config/routes.rb
+  result: clean
+  count: 0
+
+assumptions:
+  - "Inline styles are acceptable for the walking skeleton. A proper CSS strategy (Tailwind, Propshaft custom sheets, or component-level styles) lands in a future epic alongside site CRUD."
+  - "has_many :check_results on Site is STILL deferred. The index view only reads Site columns (name, url, status, last_checked_at). The latest check detail (response_time_ms, error_message) belongs on a future detail page, not the index table."
+  - "Request spec (not controller spec, not system spec). Request specs are the Rails 5+ standard for testing controller behavior without browser overhead. A system spec (Capybara + Selenium) would verify the rendered HTML more thoroughly but is overkill for a table of text."
+  - "Site.order(:name) is the default sort. No pagination — an MVP with a handful of sites doesn't need it. At scale, add .page(params[:page]) with Kaminari or Pagy."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Inline styles in the ERB views rather than a stylesheet. Chose this
+  because: (a) the walking skeleton is proving the data loop, not the
+  design system, (b) extracting to a stylesheet now would set a CSS
+  precedent before we've decided on the CSS strategy (Tailwind? plain
+  Propshaft? component styles?), (c) inline styles are trivially
+  grep-able and self-contained, which is right for a spike that will
+  be restyled. The cost is obvious: no reuse, verbose markup, no
+  hover/focus states. Future epic trades these for a real design
+  system.
+
+self_review:
+  metz: >
+    Controller is 4 lines total — 1 action, 1 instance variable, 0
+    callbacks. Sandi's "controllers instantiate one object" is
+    satisfied literally.
+  consistency: >
+    First controller in the repo. Pattern: one action, one AR query
+    in the action, no before_action, no concerns, no helpers. Future
+    controllers should match this shape until the complexity justifies
+    extracting.
+  security: >
+    site.url is rendered inside a link_to with target _blank and rel
+    noopener noreferrer. The URL is user-supplied (stored verbatim
+    from Site creation), so it could be a javascript: URI. link_to
+    does NOT sanitize the href value — it renders whatever string you
+    pass. For the single-user MVP this is a self-inflicted risk (the
+    user entered the URL). When multi-user lands, the link_to target
+    needs a scheme allowlist (http/https only) or ERB-level
+    sanitization. Flagged for the same future epic that addresses
+    SSRF in HttpChecker (slice 3).
+  performance: >
+    Site.order(:name) with no pagination, no includes, no preloading.
+    For a handful of sites this is a single query, no N+1. At scale,
+    add pagination. If the view ever shows check_results data, add
+    .includes(:check_results) to avoid N+1.
+
+confidence: high
+
+reviewer_attention:
+  - app/views/sites/index.html.erb:25         # link_to with user-supplied URL — javascript: URI risk on multi-user
+  - app/views/sites/_status_badge.html.erb:1-8 # color mapping — extracted partial for reuse
