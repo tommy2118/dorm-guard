@@ -1,0 +1,53 @@
+intent: >
+  Complete the walking skeleton by adding seed data that exercises both
+  halves of the up/down policy. This commit is the "all code is in
+  place" marker — the smoke test that follows is the verification gate.
+
+slice: 8/8
+kind: feature
+behavior_change: additive
+
+reversibility: trivial
+# Seeds are data, not schema or code. Re-running with different data
+# or deleting the rows is costless.
+
+scope:
+  declared:
+    - db/seeds.rb
+  actual:
+    - db/seeds.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Seeds are a data fixture for the manual smoke test, not a code path
+    that needs automated verification. The smoke test itself (described
+    in the commit message and the plan's verification section) is the
+    test. The seed file is 11 lines of find_or_create_by! — if it
+    raises, the error is self-evident.
+
+assumptions:
+  - "https://example.com returns 200 reliably — it is operated by IANA for exactly this purpose (RFC 2606). If it ever goes down, the seed will accurately demonstrate a transport error rather than a 200."
+  - "https://example.com/definitely-not-a-real-page returns 404. If example.com's server ever starts returning 200 for all paths (wildcard routing), the 'always down' seed becomes an 'always up' seed and the smoke test still works — just both sides show green."
+  - "find_or_create_by! is the right idempotency primitive. It matches on name (unique enough for seed data) and only sets url/interval_seconds on create, not on update. If you change the seed URL and re-run, the existing record keeps its old URL — acceptable for dev fixtures, not for production bootstrapping."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Seeds are deliberately minimal — two rows, no factories, no Faker.
+  The smoke test only needs one healthy site and one unhealthy site to
+  verify the full loop. More seeds would exercise more edge cases (e.g.,
+  a site with a very short interval, a site with a transport error) but
+  would not increase confidence in the walking skeleton's correctness.
+
+self_review: {}
+
+confidence: high
+
+reviewer_attention: []
