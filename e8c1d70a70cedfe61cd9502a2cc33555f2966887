@@ -1,0 +1,96 @@
+intent: >
+  Install tailwindcss-rails + DaisyUI and prove the CSS pipeline compiles, with
+  no view migration yet. Establishes the styling layer every later slice depends on.
+
+slice: 1/10
+kind: chore
+behavior_change: none
+
+reversibility: reversible
+
+scope:
+  declared:
+    - Gemfile
+    - Gemfile.lock
+    - app/assets/tailwind/application.css
+    - bin/dev
+    - Procfile.dev
+    - .gitignore
+    - app/assets/builds/.keep
+    - app/views/layouts/application.html.erb
+    - vendor/assets/stylesheets/daisyui.css
+  actual:
+    - .gitignore
+    - Gemfile
+    - Gemfile.lock
+    - Procfile.dev
+    - app/assets/builds/.keep
+    - app/assets/tailwind/application.css
+    - app/views/layouts/application.html.erb
+    - bin/dev
+    - vendor/assets/stylesheets/daisyui.css
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    Pure infrastructure slice (gem install + CSS entry point + vendored asset).
+    No Ruby behavior to cover. CSS pipeline is proved by
+    bin/dc bin/rails tailwindcss:build succeeding and the compiled
+    app/assets/builds/tailwind.css (1.1MB) containing DaisyUI classes
+    (.btn / .badge / .alert all present).
+
+verification:
+  tested:
+    - "bin/dc bundle exec rspec — 60/60 green, same as pre-slice baseline"
+    - "bin/dc bin/rails tailwindcss:build — 211ms, no errors"
+    - "grep of compiled tailwind.css confirms .btn / .badge / .alert DaisyUI classes present"
+  manual:
+    - "Did NOT yet verify the compiled CSS is served by the layout's stylesheet_link_tag. Layout still reads :app, not tailwind. Slice 3 is the first slice that uses DaisyUI classes in a view and will fix the wiring if needed."
+
+assumptions:
+  - "DaisyUI 5.5.19 (bundled CSS from jsdelivr) is stable enough to vendor without a lockfile; upstream regressions are rare and we can re-download to bump."
+  - "Propshaft's app/assets/builds lookup will serve app/assets/builds/tailwind.css at request time once the layout references it. Slice 3 verifies."
+  - "Generator's <main class='container mx-auto mt-28 px-5 flex'> wrapper in application.html.erb is harmless scaffolding that slice 3 replaces when it installs the DaisyUI chrome."
+
+specifications:
+  - "Tailwind entry point lives at app/assets/tailwind/application.css and imports DaisyUI via relative path to vendor/assets/stylesheets/daisyui.css — no JS plugin system, no Node dependency."
+  - "DaisyUI version is pinned by the vendored file's content, not a package manifest. Bumps are explicit re-downloads."
+
+deviations_from_plan: >
+  Two substantive deviations, both disclosed. (1) No config/tailwind.config.js — the
+  plan assumed Tailwind v3 JS config, but tailwindcss-rails 4.4 ships Tailwind v4 which
+  uses CSS-first config and emits no JS config file. Plan item removed from Slice 1's
+  declared list. (2) DaisyUI is wired via @import of a vendored CSS bundle instead of
+  @plugin 'daisyui'; the devcontainer has no Node and tailwindcss-ruby's standalone CLI
+  cannot resolve npm packages, so the plan's plugin approach was unreachable without
+  adding cssbundling-rails + Bun (out of epic scope). The vendored file and the three
+  generator-touched paths that the original plan missed were added to the plan's
+  Slice 1 declared list during drafting, so scope.drift is clean.
+
+trade_offs: >
+  Vendoring the DaisyUI CSS bundle costs ~947KB in the repo and forfeits tree-shaking
+  (all DaisyUI classes ship to the browser whether used or not). In exchange: zero Node
+  dependency, no cssbundling-rails, no package.json, no node_modules in the container,
+  no yarn/bun/npm install step in CI. For an MVP with one user and a local dev loop,
+  shipping 1MB of CSS is cheaper than owning a Node toolchain. Tree-shaking becomes
+  relevant if/when the app goes public and Core Web Vitals start mattering — a future
+  ops epic.
+
+self_review:
+  consistency: "Matches the docker-only dev loop (CLAUDE.md rule 1) — no host tooling, no Node. Every command was run through bin/dc."
+  layering: "Vendored asset lives under vendor/assets/stylesheets/ (Rails convention for third-party CSS), not app/assets/ (our own code). Keeps the distinction legible."
+  slice_purity: "One infrastructure concept (CSS pipeline + design system). No view migration, no components, no product behavior change. Slice intent is one sentence with no hidden 'and'."
+  generator_discipline: "Authored files are only application.css (2 lines) and vendor/assets/stylesheets/daisyui.css (vendored bundle). Everything else is generator output — called out explicitly in this note so a reviewer can tell scaffolding from my edits."
+
+confidence: medium
+reviewer_attention:
+  - "app/assets/tailwind/application.css:1-2 — the entire authored Tailwind entry. Two lines, but load-bearing for the whole epic."
+  - "vendor/assets/stylesheets/daisyui.css — vendored 947KB bundle. Don't read the whole thing; just confirm the provenance comment at the top matches daisyUI 5.5.19."
+  - "app/views/layouts/application.html.erb:27-29 — generator-inserted <main> wrapper. Harmless, but slice 3 will replace it, so don't over-invest in its class list."
