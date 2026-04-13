@@ -80,3 +80,5 @@ group :test do
   # hit the real network.
   gem "webmock"
 end
+
+gem "tailwindcss-rails", "~> 4.4"
