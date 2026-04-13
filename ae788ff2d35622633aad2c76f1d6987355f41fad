@@ -1,0 +1,75 @@
+intent: >
+  Add a tailwindcss:build step to both the test and system-test CI jobs so
+  app/assets/builds/tailwind.css exists before rspec runs. Fixes 20 failing
+  examples on PR #20 where the layout's stylesheet_link_tag hit
+  Propshaft::MissingAssetError.
+
+slice: 13/13
+kind: fix
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared:
+    - .github/workflows/ci.yml
+  actual:
+    - .github/workflows/ci.yml
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    CI workflow change only. The underlying rspec suite is unchanged —
+    local rspec was green throughout because the build artifact had been
+    generated earlier in the session. No new test coverage is possible
+    for the workflow file itself; verification happens when CI runs on
+    the pushed branch.
+
+verification:
+  tested:
+    - "bin/dc bundle exec rspec — 129/129 green (same baseline, unchanged)"
+  manual:
+    - "Workflow file hand-verified: both test and system-test jobs now run `bin/rails tailwindcss:build` with RAILS_ENV=test immediately before db:test:prepare."
+    - "Will be observable on the next CI run of feature/site-crud — the test job must flip from red to green."
+
+assumptions:
+  - "tailwindcss-rails's rake task is available in CI after `bundler-cache: true` installs the gem. Verified by the fact that slice 1 created the build step via the same gem."
+  - "No cssbundling-rails is involved. The standalone CLI in tailwindcss-ruby runs without Node, so the CI step needs no apt-get or node setup. Matches slice 1's stack decision."
+  - "The workflow file will trigger a fresh CI run when pushed because the PR is already open against main — GitHub Actions re-runs on new commits to the PR head."
+
+specifications:
+  - "CI's test and system-test jobs MUST run `bin/rails tailwindcss:build` before rspec. Any future refactor that removes this step will resurrect the 20-failure Propshaft::MissingAssetError regression that this slice was created to fix."
+
+deviations_from_plan: addressing CI feedback
+
+trade_offs: >
+  Two alternatives considered. (a) Gitignore change — commit the compiled
+  app/assets/builds/tailwind.css. Rejected because committed build
+  artifacts drift from source and create merge conflicts every time the
+  stylesheet changes; the .gitignore entry from slice 1 is deliberate.
+  (b) Configure Propshaft to tolerate missing assets in test env — a
+  config/environments/test.rb change that stubs stylesheet_link_tag.
+  Rejected because it hides the real failure: the test env would stop
+  noticing that the asset pipeline broke. Running the actual build step
+  is the honest fix.
+
+  Adding the step to BOTH test AND system-test jobs — slight duplication.
+  Alternative: a shared composite action or a reusable workflow step.
+  Rejected as premature abstraction for two jobs and one command.
+
+self_review:
+  consistency: "New step uses the same RAILS_ENV: test env block and indentation as the existing db:test:prepare step. No style drift."
+  ci_discipline: "CI mirrors dev now. Dev uses bin/dev which runs foreman + tailwindcss:watch in parallel; CI runs tailwindcss:build once before specs. Both produce the same app/assets/builds/tailwind.css output, so CI and dev environments stay aligned."
+  honest_failure_mode: "Did not try to hide the failure in config/environments/test.rb. The asset pipeline IS load-bearing for layout rendering, and CI should fail loudly if it's broken — the fix is to make it not break, not to silence it."
+  slice_purity: "One concept: CI builds Tailwind before running specs. One file. One change. Intent is one sentence with no 'and'."
+
+confidence: high
+reviewer_attention:
+  - ".github/workflows/ci.yml:83-86 and 105-108 — the two new build steps. If either is removed, the test job regresses to 20 failures immediately. The step must land BEFORE db:test:prepare because db:test:prepare does not depend on assets but rspec's very first request spec will."
