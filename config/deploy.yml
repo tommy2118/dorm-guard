@@ -72,8 +72,16 @@ env:
     # SMTP endpoint. Provider-neutral naming — currently pointed at
     # Amazon SES us-east-1. Swap providers via .env / kamal env push,
     # not via config changes, so the image stays portable.
+    #
+    # Port 2587 instead of the canonical 587 because DigitalOcean
+    # blocks outbound SMTP on 25/465/587 by default as a spam
+    # mitigation (see https://docs.digitalocean.com/support/why-is-
+    # smtp-blocked/). SES exposes 2465 and 2587 as alternate ports
+    # for exactly this reason — they bypass cloud-provider ISP
+    # blocks. 2587 is STARTTLS-over-alternate, same protocol as 587.
+    # Unblocking the canonical 587 requires a DO support ticket.
     SMTP_ADDRESS: email-smtp.us-east-1.amazonaws.com
-    SMTP_PORT: "587"
+    SMTP_PORT: "2587"
 
     # Run the Solid Queue Supervisor inside the web server's Puma process
     # to do jobs. When you start using multiple servers, split job
