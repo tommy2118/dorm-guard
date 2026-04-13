@@ -1,0 +1,26 @@
+<% if empty? %>
+  <p class="text-base-content/70 py-8">No check history yet. Waiting for the next scheduled run.</p>
+<% else %>
+  <div class="overflow-x-auto">
+    <table class="table table-zebra">
+      <thead>
+        <tr>
+          <th>Checked</th>
+          <th>Status code</th>
+          <th>Response time</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% results.each do |result| %>
+          <tr>
+            <td><%= checked_at_label(result) %></td>
+            <td><%= status_code_label(result) %></td>
+            <td><%= response_time_label(result) %></td>
+            <td class="text-base-content/70"><%= error_label(result) %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% end %>
