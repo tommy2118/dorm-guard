@@ -1,0 +1,113 @@
+intent: >
+  Wire production ActionMailer to deliver via Mailgun SMTP with
+  credentials read from ENV, accepting silent delivery failures as
+  the documented trade-off so transient SMTP hiccups don't poison
+  Solid Queue's failed-job table.
+
+slice: 3/9
+kind: feature
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - config/environments/production.rb
+    - spec/config/production_smtp_spec.rb
+  actual:
+    - config/environments/production.rb
+    - spec/config/production_smtp_spec.rb
+    - .env.example
+  drift:
+    - .env.example
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+11 examples"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/config/production_smtp_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop config/environments/production.rb spec/config/production_smtp_spec.rb
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "delivery_method :smtp, perform_deliveries true, raise_delivery_errors false"
+    - "smtp_settings block reads address/port/user_name/password from ENV"
+    - "user_name and password have NO default (fail-fast on missing credentials)"
+    - "STARTTLS auto-upgrade enabled on port 587 with :plain auth"
+    - "Scaffold stub (Rails.application.credentials.dig(:smtp, ...)) is gone"
+  manual:
+    - "None yet — live Mailgun delivery is verified in Slice 7's TEST-NET-1 smoke"
+
+assumptions:
+  - "Mailgun's SMTP endpoint smtp.mailgun.org:587 requires STARTTLS + AUTH PLAIN (current Mailgun docs; has been stable for years)"
+  - "Operator's Mailgun domain is already verified (user stated in Epic 3 planning — preconditioned in Slice 5 ADR)"
+  - "MAILGUN_SMTP_USER_NAME is the SMTP login (typically postmaster@<domain> for Mailgun), not an API key — operator wires the correct credential when populating .env"
+  - "Mailgun's US region is the default; EU-region accounts need smtp.eu.mailgun.org, flagged in .env.example comments"
+
+specifications:
+  - "Production mailer credentials come from ENV, not Rails credentials — this keeps the image buildable without master.key and lets CI write the same schema from GitHub secrets"
+  - "raise_delivery_errors = false is the declared production stance. Smoke testing + Mailgun dashboard are the external backstops. Any future change to raise must be paired with a PerformCheckJob rescue strategy so a SMTP hiccup doesn't kill the whole job."
+  - "MAILGUN_SMTP_USER_NAME and MAILGUN_SMTP_PASSWORD are required-on-boot (no ENV.fetch default). The container refuses to start if either is missing — this is a deliberate fail-fast."
+
+deviations_from_plan: >
+  Extended .env.example with the four MAILGUN_SMTP_* vars in the same slice — the file header already declared Slice 2B as the owner of these entries, and omitting them would be a process violation per feedback_enforce_constraints_in_config.
+
+trade_offs: >
+  Chose ENV-based credentials over Rails.application.credentials
+  because (a) master.key isn't trivially available in CI, (b) a shared
+  .env.example contract keeps laptop and CI symmetric, (c) rotating
+  credentials is one `kamal env push` rather than `bin/rails
+  credentials:edit` + redeploy. Cost: credentials live in environment
+  variables on the running container, visible to anyone with shell
+  access. Acceptable for single-operator MVP; Epic 6 is the place to
+  revisit if multi-user visibility becomes a concern.
+
+interfaces:
+  published:
+    - "MAILGUN_SMTP_ADDRESS env var (default: smtp.mailgun.org)"
+    - "MAILGUN_SMTP_PORT env var (default: 587)"
+    - "MAILGUN_SMTP_USER_NAME env var (required, no default)"
+    - "MAILGUN_SMTP_PASSWORD env var (required, no default)"
+
+self_review:
+  consistency: >
+    Matches the Slice 2A text-level spec pattern. The production.rb
+    file is still within Metz's 100-line rule (now 114 lines — wait,
+    this actually exceeds. See note below.)
+  metz: >
+    production.rb grew from 99 to 114 lines with the SMTP block
+    added. This is a config file, not a class, so the 100-line rule
+    is not strictly applicable — but flagging for honesty. If the
+    file keeps growing, extract mailer config into a separate
+    initializer (config/initializers/action_mailer.rb) in a future
+    refactor slice. Not doing it now because splitting mid-epic
+    would mean touching the same file from two slices.
+  duplication: "N/A — all SMTP settings are unique keys in one hash"
+  error_handling: >
+    Fail-fast on missing credentials (ENV.fetch without default on
+    user_name and password) is the error handling. A KeyError at
+    boot is exactly the right signal for 'operator forgot to set a
+    required secret' — the container refuses to start, Kamal rolls
+    back, the operator sees the log, fixes the .env, redeploys.
+    The alternative (empty string defaults + silent delivery
+    failure) would be the worst outcome for a downtime monitor.
+
+principle_violations:
+  - rule: "Sandi Metz 100-line class rule (applied loosely to config files)"
+    location: "config/environments/production.rb (114 lines total after this slice)"
+    justification: "config/environments/production.rb is a configuration block, not a class. The Rails 8 scaffold version was already 90 lines of mostly-commented settings; Slices 2A and 2B both touched it because the scaffold expects every production setting in one file. Extraction (config/initializers/action_mailer.rb) is a future-slice refactor, not a mid-epic concern."
+    considered_alternatives:
+      - "Extract SMTP block to config/initializers/action_mailer.rb (rejected for this slice: adds a second touched file and splits the SMTP failure domain across two files, harder to audit at PR time)"
+      - "Keep the scaffold's Rails.application.credentials approach (rejected: breaks CI/laptop env symmetry, requires master.key at build time)"
+
+confidence: high
+reviewer_attention:
+  - config/environments/production.rb:61-77   # The SMTP block. Verify user_name/password have NO default, and that port is coerced with .to_i — ENV vars are always strings.
