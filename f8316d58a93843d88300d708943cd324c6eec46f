@@ -1,0 +1,132 @@
+intent: >
+  Rename MAILGUN_SMTP_* env vars to provider-neutral SMTP_* and point
+  the defaults at Amazon SES, because Mailgun's free tier is
+  unavailable for the operator and SES is natural to unify on given
+  we already use AWS for Route 53.
+
+slice: 6b/9
+kind: refactor
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - config/environments/production.rb
+    - spec/config/production_smtp_spec.rb
+    - config/deploy.yml
+    - .kamal/secrets
+    - .env.example
+    - README.md
+    - docs/decisions/pr-0021-kamal-deploy.md
+  actual:
+    - config/environments/production.rb
+    - spec/config/production_smtp_spec.rb
+    - config/deploy.yml
+    - .kamal/secrets
+    - .env.example
+    - README.md
+    - docs/decisions/pr-0021-kamal-deploy.md
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+2 examples"
+
+tests:
+  needed: "existing"
+  rationale: >
+    spec/config/production_smtp_spec.rb from Slice 2B is rewritten
+    in-place to match the new env var names and defaults, plus
+    two new deny-list assertions verifying MAILGUN_* does not
+    resurface. Total new assertion count: +2.
+
+lint:
+  run: bin/dc bundle exec rubocop config/environments/production.rb spec/config/production_smtp_spec.rb
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "production.rb declares SMTP_* env vars with SES defaults and :login auth"
+    - "production.rb no longer contains the MAILGUN_ prefix or smtp.mailgun.org"
+    - "Full rspec suite 164/164 green"
+  manual:
+    - "bin/dc kamal config parses cleanly with nightloom registry + 104.236.125.236 droplet"
+    - "grep MAILGUN in tree — only intentional historical (ADR) and deny-list (spec) hits"
+    - "grep SMTP_ADDRESS/SMTP_USER_NAME across files — consistent renaming across production.rb, spec, deploy.yml, .kamal/secrets, .env.example, README, and ADR"
+
+assumptions:
+  - "Amazon SES's SMTP endpoint email-smtp.us-east-1.amazonaws.com:587 accepts AUTH LOGIN with the derived SES SMTP password (standard SES behavior, documented)"
+  - "The operator's AWS account has SES enabled in us-east-1 (default region for SES — enabled by default for most AWS accounts)"
+  - "SES's sandbox mode restricts to verified recipients only, which is what we want for single-operator MVP alerting. Promotion to production (which lifts the restriction) is a separate future action."
+  - "The IAM secret → SES SMTP password derivation algorithm (HMAC-SHA256 chain with literal date '11111111', service 'ses', message 'SendRawEmail', terminal 'aws4_request', version byte 0x04) is the documented AWS algorithm — will compute it in Slice 6's AWS provisioning step"
+
+specifications:
+  - "Env var names for SMTP are provider-neutral (SMTP_*, not SES_*). Swapping providers in the future is a .env change, not a code change."
+  - "The DEFAULT for SMTP_ADDRESS encodes the current provider choice (email-smtp.us-east-1.amazonaws.com → SES us-east-1). Changing providers means changing the default AND updating the ADR's 'Provider' section in lockstep."
+  - "SMTP AUTH LOGIN is now the declared authentication mechanism (was AUTH PLAIN for Mailgun). Both work with most providers, but :login matches SES's expectation and the Net::SMTP auth negotiation is cheaper when the server's preferred mechanism matches."
+
+deviations_from_plan: >
+  This slice was not in the original 9-slice plan. Inserted mid-flight because Mailgun's free tier was unavailable for the operator. Numbered 6b/9 to signal insertion after the committed 6/9 (ADR) without renumbering subsequent notes. The plan file's slice 2B documented Mailgun as the SMTP provider; that's now stale and would need an update in a plan refresh, but the plan file is not git-tracked so it drifts without blocking commits.
+
+trade_offs: >
+  Chose provider-neutral SMTP_* naming over SES-specific SES_SMTP_*
+  naming. Cost: the variable name doesn't advertise the provider,
+  so a reader of production.rb has to look at the default value or
+  the ADR to know the provider. Benefit: the next provider swap is
+  a .env change plus a default change, not a codebase-wide rename.
+  We already did the rename once in this slice — declared naming
+  convention for the next time.
+
+  Chose to rewrite the existing production_smtp_spec in place rather
+  than create a new spec file + delete the old one. Cost: the diff
+  is harder to read in isolation (rename + assertion changes are
+  intertwined). Benefit: there's only one SMTP spec file in the
+  tree, and the rewrite atomically updates the assertion set to
+  match the new reality. git history shows both states via the
+  rewrite.
+
+interfaces:
+  consumed:
+    - "IAM user with ses:SendEmail + ses:SendRawEmail (to be provisioned in Slice 6's AWS step)"
+    - "aws ses verify-email-identity for the operator's recipient address"
+  published:
+    - "SMTP_ADDRESS env var (default: email-smtp.us-east-1.amazonaws.com)"
+    - "SMTP_PORT env var (default: 587)"
+    - "SMTP_USER_NAME env var (required, no default — SES IAM access key ID)"
+    - "SMTP_PASSWORD env var (required, no default — SES-derived SMTP password)"
+  retired:
+    - "MAILGUN_SMTP_ADDRESS / _PORT / _USER_NAME / _PASSWORD (from Slice 2B)"
+
+self_review:
+  consistency: >
+    Matches the provider-neutral naming pattern used elsewhere in
+    the deploy config (DORM_GUARD_HOST for the hostname, not
+    DORM_GUARD_NYC3_HOST). Follows the same text-level spec pattern
+    as production_ssl_spec.rb.
+  metz: >
+    production.rb is now 113 lines (was 114 — one line savings from
+    the rewritten mailer comment block). Same file-size flag as
+    Slice 2B — config file, not a class.
+  duplication: >
+    SMTP_ADDRESS / SMTP_PORT are specified both as defaults in
+    production.rb AND as explicit env.clear values in deploy.yml.
+    This is deliberate — deploy.yml wins in production (kamal sets
+    env vars before the container boots), and the production.rb
+    defaults serve as documentation-in-code of the expected values.
+    A future operator reading production.rb sees the canonical
+    values without having to cross-reference deploy.yml.
+  error_handling: >
+    Fail-fast stance preserved: SMTP_USER_NAME and SMTP_PASSWORD
+    still have no defaults, so a missing credential causes KeyError
+    at boot. SES's sandbox mode is a secondary fail-loud backstop —
+    unverified recipients produce a visible MessageRejected error
+    in SES logs, not a silent drop.
+  dead_code: "None — Mailgun references either removed or intentionally retained as historical/deny-list."
+
+confidence: high
+reviewer_attention:
+  - config/environments/production.rb:61-80   # The rewritten smtp_settings block. Verify SMTP_USER_NAME/PASSWORD still have NO default (KeyError on missing), and that authentication: :login is in place (SES's preferred auth).
+  - .env.example:33-55                         # The new SES-specific guidance and the alternative-provider comment list. This is what the operator reads when copying .env.example to .env.
