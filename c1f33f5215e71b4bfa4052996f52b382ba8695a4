@@ -1,0 +1,67 @@
+intent: >
+  Land has_many :check_results, dependent: :destroy on Site — the reverse
+  association deferred across every slice of Epic 1. Slice 6 (detail page) and
+  slice 9 (destroy) are the first readers.
+
+slice: 4/10
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  actual:
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb
+  rationale: >
+    Three new examples under a new "check_results association" describe block:
+    empty association on a fresh site, reverse-side create via site.check_results.create!,
+    and cascade deletion when the site is destroyed. The cascade test is the load-bearing
+    one — it proves dependent: :destroy actually fires.
+
+assumptions:
+  - "dependent: :destroy's per-record callback cost is acceptable at MVP scale. A site with one month of 60s checks has ~44k CheckResult rows; destroying such a site synchronously in a request is slow but survivable for single-user MVP. Slice 9 destroy flow may revisit if it becomes a problem."
+
+specifications:
+  - "Site owns its check_results: deleting a site deletes all its check results. No soft-delete, no archival."
+  - "The association has no inverse_of override, no counter_cache, no default scope. Just a plain has_many with cascade. Future slices that need an ordered scope (e.g. most-recent-first for the detail page) should use an explicit .order(checked_at: :desc) at the call site rather than baking it into the association — keeps the association dumb and the callers honest."
+
+deviations_from_plan: none
+
+trade_offs: >
+  dependent: :destroy vs delete_all vs restrict_with_error. :destroy runs ActiveRecord
+  callbacks on each CheckResult (there are none today, so it behaves like delete_all with
+  a transaction). It was chosen over delete_all because a future slice may add a callback
+  (e.g. Solid Queue cleanup, broadcast, audit row) that must fire on cascade — then
+  delete_all would silently skip it. restrict_with_error rejected because it forces the
+  destroy slice to either manually purge check_results first or to fail loudly; both
+  options are more code than the cascade, for no MVP benefit.
+
+interfaces:
+  published:
+    - "Site#check_results -> ActiveRecord::Relation(CheckResult)"
+
+self_review:
+  metz: "site.rb grew by one line. Still 21 lines, well under Metz's 100-line rule."
+  tell_dont_ask: "Specs use site.check_results.create!, not a loose CheckResult.create!(site: site) — they tell the association what to do."
+  not_mocking: "No mocks. Real records, real transactions, real cascade — the test asserts actual AR behavior, not stubbed behavior."
+  deferred_item_closure: "Closes a deferred item flagged in slices 1, 2, 4, 5, and 7 of Epic 1. The agent-notes from those slices said 'added in the first slice that reads the reverse side' — that slice is next (slice 6)."
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb:6 — the new has_many line. Placed between the enum and validations on purpose: associations read first in Rails conventions, before validations. Consistent with ApplicationRecord Rails convention."
