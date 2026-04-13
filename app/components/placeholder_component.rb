@@ -1,2 +1,0 @@
-class PlaceholderComponent < ApplicationComponent
-end

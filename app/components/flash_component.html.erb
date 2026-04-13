@@ -1,0 +1,5 @@
+<% entries.each do |key, message| %>
+  <div role="alert" class="<%= css_classes_for(key) %>">
+    <span><%= message %></span>
+  </div>
+<% end %>
