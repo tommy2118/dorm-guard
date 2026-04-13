@@ -1,0 +1,84 @@
+intent: >
+  Let users edit existing sites, reusing SiteFormComponent from slice 7.
+  Adds the :edit and :update routes/actions and expands before_action
+  :set_site's only array.
+
+slice: 8/10
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - config/routes.rb
+    - app/controllers/sites_controller.rb
+    - app/views/sites/edit.html.erb
+    - spec/requests/sites_spec.rb
+  actual:
+    - app/controllers/sites_controller.rb
+    - app/views/sites/edit.html.erb
+    - config/routes.rb
+    - spec/requests/sites_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/requests/sites_spec.rb
+  rationale: >
+    Two new describe blocks: 'GET /sites/:id/edit' (success, pre-fill,
+    404) and 'PATCH /sites/:id' (valid update with flash, mass-assignment
+    protection for status, invalid update returns 422 without mutating).
+    SiteFormComponent is unchanged, so no new component spec is needed —
+    the existing #heading/#submit_label unit tests in slice 7 already
+    cover the 'Update site' branch. Adding rendering-based edit tests
+    here would duplicate coverage across the testing boundary.
+
+assumptions:
+  - "SiteFormComponent's submit_label/heading logic is correct for persisted records. Verified via slice 7's unit tests on the component methods (not re-verified here via rendering)."
+
+specifications:
+  - "Update failures render :edit with :unprocessable_content. The symbol choice is consistent with slice 7's create failure path; a future Rack deprecation would catch both in the same sweep."
+  - "Mass-assignment protection for status/last_checked_at is enforced identically on create AND update — the request spec re-verifies on PATCH, because a future change that widens site_params could easily leak through only one of the two actions."
+
+deviations_from_plan: none
+
+trade_offs: >
+  edit.html.erb is a one-liner that calls render(SiteFormComponent.new(site:
+  @site)). Alternative: render the component directly from the controller,
+  skip the view file. Rejected because (a) Rails convention expects one view
+  file per action, (b) a future reviewer looking at app/views/sites/ would be
+  surprised by a missing file, (c) Turbo Streams in future slices may need
+  to address edit.html.erb by name.
+
+  The edit action is empty — no instance variable assignment beyond what
+  set_site already did. Could be elided (Rails auto-renders the matching
+  view), but an explicit empty action is clearer than implicit rendering.
+  Kept explicit for readability.
+
+interfaces:
+  consumed:
+    - "SiteFormComponent.new(site:)"  # from slice 7
+    - "Site#check_results"  # indirectly via set_site + @site, not this slice's action
+  published:
+    - "SitesController#edit"
+    - "SitesController#update"
+
+self_review:
+  controller_guardrails: "before_action :set_site grew from only: [:show] to only: [:show, :edit, :update]. One lookup, three actions. No per-action Site.find. site_params reused from slice 7 — not redefined. Rails standard redirect/render flow preserved. One action PAIR (edit + update) added; no opportunistic additions."
+  metz: "SitesController is now 35 lines, 7 methods, all ≤4 lines. Still under Metz's 100-line / 5-line limits."
+  dry: "Form rendering is the one-line `<%= render(SiteFormComponent.new(site: @site)) %>` in both new.html.erb and edit.html.erb. Zero duplication."
+  testing_boundary_enforcement: "Deliberately did not add a component spec that renders a persisted site to verify 'Update site' label — slice 7's unit tests cover the method, and duplicating via rendering would add flake risk (the edit route dependency) without catching new bugs."
+  mass_assignment_defense_in_depth: "Separate request spec on PATCH for mass-assignment protection, not just on POST. Both paths through site_params are covered."
+
+confidence: high
+reviewer_attention:
+  - "app/controllers/sites_controller.rb:2 — the before_action only: array. Slice 9 adds :destroy to this array (a site must be loaded to be destroyed). Any future action that needs @site should be added here, not with its own find."
+  - "config/routes.rb:18 — the resources :sites line keeps growing one symbol pair at a time. Slice 9 completes it with :destroy; resist the temptation to collapse to a bare 'resources :sites' in slice 9 — that hides the incremental growth in the git history."
