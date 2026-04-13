@@ -1,0 +1,84 @@
+intent: >
+  Mount Docker Desktop's magic ssh-agent proxy socket and host
+  known_hosts into the devcontainer so Kamal's SSH client can
+  authenticate to remote hosts using the host's loaded keys.
+  Companion to Slice 5C — that slice gave the container Docker,
+  this slice gives it SSH auth. Both are preconditions for
+  `bin/dc kamal setup`.
+
+slice: 6d/9
+kind: chore
+behavior_change: additive
+reversibility: reversible
+
+scope:
+  declared:
+    - .devcontainer/compose.yaml
+  actual:
+    - .devcontainer/compose.yaml
+  drift: []
+
+proof:
+  tests_run: bin/dc bash -c 'ssh-add -l && ssh -o BatchMode=yes root@104.236.125.236 uname -a'
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Infrastructure change with no Ruby code touched. Automated
+    spec for 'can SSH from container to external host' is
+    environment-dependent (droplet IP, host agent state) and
+    fragile. Verified end-to-end via direct SSH from container.
+
+verification:
+  tested: []
+  manual:
+    - "bin/dc bash -c 'echo $SSH_AUTH_SOCK && ls -la $SSH_AUTH_SOCK' — socket is present at /run/host-services/ssh-auth.sock"
+    - "bin/dc bash -c 'ssh-add -l' — lists the host's id_rsa key, proving agent forwarding works"
+    - "bin/dc ssh -o BatchMode=yes root@104.236.125.236 uname -a — successful login, returns 'Linux dorm-guard ... x86_64'"
+    - "The 'hostfile_replace_entries: mkstemp: Permission denied' warning on SSH is harmless — it's ssh attempting to UPDATE a read-only known_hosts when the host key already matches. No failure, just a warning."
+
+assumptions:
+  - "Docker Desktop's magic ssh-agent proxy at /run/host-services/ssh-auth.sock is a stable interface. Docker has documented it since 2020 and it's the recommended pattern for SSH from Docker Desktop containers."
+  - "The host's ssh-agent has the required keys loaded (verified: id_rsa matching pulse-deploy on the DO-registered keys). If a future deploy requires a different key, the operator must ssh-add it on the host."
+  - "On Linux hosts (not Docker Desktop), /run/host-services/ssh-auth.sock does not exist. The compose.yaml will fail to mount on Linux unless the operator either runs Docker Desktop or alters the mount path. Linux-host compatibility is out of scope for Slice 5D — revisit when Slice 8 (CI deploy) runs on GitHub Actions runners (which have their own ssh setup and don't use the devcontainer at all)."
+
+specifications:
+  - "No private SSH key material is mounted into the devcontainer. Authentication to remote hosts goes through the forwarded ssh-agent only. If the host agent is unlocked, the container can auth; if the host agent is locked/empty, the container cannot auth."
+  - "known_hosts is mounted read-only. The container can read the host's trust store but cannot write to it. Any new host key must be accepted on the host side first."
+  - "SSH_AUTH_SOCK is exported via docker-compose environment, not shell profile. The env var is set for all exec sessions through bin/dc, including non-interactive ones."
+
+deviations_from_plan: >
+  Not in the original 9-slice plan. Inserted mid-flight as the second-half of Slice 5C (which was itself a mid-flight insertion). Numbered 6d/9 to continue the 'letter suffix on the parent integer' pattern — Slices 5B, 5C, 5D are all Epic-3 mid-flight insertions that deepen prior slices without renumbering committed notes.
+
+trade_offs: >
+  Chose agent forwarding over mounting ~/.ssh read-only. Cost:
+  the container requires a running host ssh-agent to work.
+  Benefit: no private key material crosses the mount boundary,
+  and key rotation happens on the host (where the operator
+  already manages it) rather than needing a devcontainer rebuild.
+
+  Chose read-only known_hosts over a writable mount. Cost: ssh
+  logs a harmless warning on each session. Benefit: the
+  container can't corrupt the operator's trust store — a
+  misbehaving kamal exec can't silently accept a new host key
+  for an existing host (which would be a MitM risk).
+
+self_review:
+  consistency: >
+    Same compose.yaml pattern as the Slice 5C docker.sock mount.
+    Both use host-side resources that Docker Desktop manages.
+  security: >
+    Agent forwarding + read-only known_hosts is the safer of the
+    obvious options. Mounting private keys would have been
+    faster but leaves material in the container's namespace.
+  completeness: >
+    This plus Slice 5C together give the container EVERYTHING
+    kamal setup needs: Docker CLI + Docker daemon access +
+    SSH client + SSH credentials + known_hosts. No more
+    preconditions for Slice 6 to succeed.
+
+confidence: high
+reviewer_attention:
+  - .devcontainer/compose.yaml:17-22   # The ssh-agent socket mount + SSH_AUTH_SOCK env. This is the agent-forwarding plumbing — the rest of the slice's value rides on this one mount working.
