@@ -1,0 +1,104 @@
+intent: >
+  Make the devcontainer Docker-capable (install docker CLI static
+  binary, mount host docker socket, add vscode to root group for
+  socket access) so bin/dc kamal setup can reach Docker and the
+  project's 'all tooling in-container' rule stays intact.
+
+slice: 6c/9
+kind: chore
+behavior_change: additive
+reversibility: reversible
+
+scope:
+  declared:
+    - .devcontainer/Dockerfile
+    - .devcontainer/compose.yaml
+  actual:
+    - .devcontainer/Dockerfile
+    - .devcontainer/compose.yaml
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Infrastructure change with no Ruby code touched. Verified end-
+    to-end via bin/dc docker version (client reaches host server)
+    and bin/dc kamal config (resolves real deploy surfaces). A
+    spec asserting 'docker is installed in the devcontainer' would
+    be circular — the devcontainer image either has it or doesn't,
+    and that's a build-time concern.
+
+verification:
+  tested:
+    - "Full rspec suite 164/164 after container rebuild + bundle install"
+  manual:
+    - "Rebuilt devcontainer via docker compose -f .devcontainer/compose.yaml down && up -d --build — succeeded after 2 iterations (first attempt missed USER root, second missed that docker.io package lacks the CLI, third is what's committed)"
+    - "bin/dc docker version — client 27.3.1 reaches host Docker Desktop server 29.3.1"
+    - "bin/dc bin/rails tailwindcss:build — CSS artifact rebuilt in 276ms, confirming the rebuild didn't lose the tailwindcss-ruby binary"
+    - "bin/dc kamal config — dumps the expected deploy surface (droplet 104.236.125.236, registry.digitalocean.com/nightloom, version f8316d58)"
+
+assumptions:
+  - "Docker CLI 27.3.1 is API-compatible with Docker Desktop 29.x servers (confirmed by successful version exchange). Future Docker server upgrades may require bumping the DOCKER_CLI_VERSION ARG, but the client is usually forward/backward-compatible within a few majors."
+  - "Docker Desktop on macOS will continue to expose its socket at /var/run/docker.sock (the documented Docker Desktop path). Linux hosts mount their native daemon socket at the same path. This Dockerfile makes no OS-conditional logic because both paths are the same."
+  - "usermod -aG root vscode does not introduce a meaningful privilege escalation in the devcontainer context — the container is already a full development environment the operator fully trusts, and the root group membership only gives group-file-access, not setuid/setgid or sudo-without-password."
+  - "The static Docker CLI binary URL structure (https://download.docker.com/linux/static/stable/<arch>/docker-<version>.tgz) is stable — Docker has used it for years and it's documented. If Docker reorganizes their distribution, this build breaks loudly."
+
+specifications:
+  - "The devcontainer hosts a Docker CLI that talks to the host daemon via bind-mounted socket. It does NOT run a nested Docker daemon. Adding a daemon inside the devcontainer is out of scope and would conflict with the socket mount."
+  - "vscode user gets group-file-access to /var/run/docker.sock via root supplementary group. The vscode user's primary GID is unchanged (still 1000), and no setuid escalation is configured."
+  - "DOCKER_CLI_VERSION is pinned at image build time via an ARG. Reproducing the image from the same source always produces the same CLI version."
+
+deviations_from_plan: >
+  Not in the original 9-slice plan. Inserted mid-flight because the devcontainer as-shipped couldn't host a kamal deploy. Numbered 6c/9 to signal a second insertion after the committed 6b/9 (Slice 5B) — both are same-day mid-flight insertions that didn't exist in the original plan and don't renumber subsequent notes.
+
+trade_offs: >
+  Chose the static CLI binary over setting up Docker's own apt
+  repo. Cost: we pin a specific CLI version (has to be bumped
+  manually) and any future patch requires a Dockerfile edit +
+  devcontainer rebuild. Benefit: no third-party apt source, no
+  GPG key management, two fewer RUN layers, smaller image. The
+  pin is actually a feature — the CLI version is deterministic
+  across all developer machines that rebuild the devcontainer.
+
+  Chose usermod -aG root vscode over the alternatives (chmod 666
+  the socket, run everything as root, use a docker group). The
+  chmod approach doesn't work on Docker Desktop because the
+  socket is mounted read-only from the macOS host perspective.
+  Running everything as root would require changing bin/dc and
+  is a broader change. Creating a docker group would require
+  matching the host's docker group GID, which varies between
+  Linux distros and doesn't exist on macOS. The root-group
+  membership is the standard Docker-via-socket pattern for
+  Docker Desktop devcontainers and it's honest about what's
+  happening.
+
+self_review:
+  consistency: >
+    Matches the project's 'all tooling in container' rule from
+    CLAUDE.md. The alternative (run kamal on host) would have
+    been the FIRST exception to that rule, and exceptions are
+    how rules erode.
+  error_handling: >
+    set -eux in the RUN script — fails loudly on any step.
+    arch detection via dpkg --print-architecture, with a case
+    statement that exits non-zero on unsupported architectures
+    (so the image build fails cleanly on e.g. riscv64 instead
+    of silently producing a broken CLI).
+  security: >
+    Adding vscode to root group is the one notable security
+    trade-off. Documented inline in the Dockerfile and in the
+    commit body. Acceptable because the devcontainer is a
+    single-operator development environment — not a multi-
+    tenant runtime.
+
+principle_violations: []
+
+confidence: high
+reviewer_attention:
+  - .devcontainer/Dockerfile:17-46   # The Docker CLI install + usermod. The usermod line is the one to eyeball — it's a supplementary-group change, which is safe, but future maintainers should understand *why* it's there before removing it.
+  - .devcontainer/compose.yaml:10-16 # The socket mount. On Linux hosts running a non-Docker-Desktop daemon, /var/run/docker.sock may be owned differently and the usermod-aG-root trick may not apply. Re-verify if deploying the devcontainer on Linux.
