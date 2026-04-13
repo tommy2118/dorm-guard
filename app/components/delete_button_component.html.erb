@@ -1,0 +1,4 @@
+<%= button_to "Delete", site_path(site),
+      method: :delete,
+      class: "btn btn-error btn-sm",
+      form: { data: { turbo_confirm: confirm_message } } %>

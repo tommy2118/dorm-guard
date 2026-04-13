@@ -223,4 +223,38 @@ RSpec.describe "Sites", type: :request do
       expect(response).to have_http_status(:unprocessable_content)
     end
   end
+
+  describe "DELETE /sites/:id" do
+    let!(:site) do
+      Site.create!(
+        name: "Example",
+        url: "https://example.com",
+        interval_seconds: 60
+      )
+    end
+
+    it "destroys the site and redirects to the index with a success flash" do
+      expect {
+        delete site_path(site)
+      }.to change(Site, :count).by(-1)
+
+      expect(response).to redirect_to(sites_path)
+      follow_redirect!
+      expect(response.body).to include("Site deleted.")
+    end
+
+    it "cascade-deletes the site's check results" do
+      site.check_results.create!(status_code: 200, response_time_ms: 123, checked_at: 1.minute.ago)
+      site.check_results.create!(status_code: 500, response_time_ms: 200, checked_at: 2.minutes.ago)
+
+      expect {
+        delete site_path(site)
+      }.to change(CheckResult, :count).by(-2)
+    end
+
+    it "returns 404 when the site does not exist" do
+      delete site_path(id: 999_999)
+      expect(response).to have_http_status(:not_found)
+    end
+  end
 end

@@ -1,5 +1,5 @@
 class SitesController < ApplicationController
-  before_action :set_site, only: [ :show, :edit, :update ]
+  before_action :set_site, only: [ :show, :edit, :update, :destroy ]
 
   def index
     @sites = Site.order(:name)
@@ -32,6 +32,11 @@ class SitesController < ApplicationController
     else
       render :edit, status: :unprocessable_content
     end
+  end
+
+  def destroy
+    @site.destroy
+    redirect_to sites_path, notice: "Site deleted."
   end
 
   private
