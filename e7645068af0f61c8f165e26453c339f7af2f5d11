@@ -1,0 +1,86 @@
+intent: >
+  Install pagy and include Pagy::Backend in ApplicationController and
+  Pagy::Frontend in ApplicationHelper so slice 6 and slice 10 can paginate
+  without repeating config.
+
+slice: 5/10
+kind: chore
+behavior_change: none
+
+reversibility: reversible
+
+scope:
+  declared:
+    - Gemfile
+    - Gemfile.lock
+    - config/initializers/pagy.rb
+    - app/controllers/application_controller.rb
+    - app/helpers/application_helper.rb
+    - spec/rails_helper.rb
+  actual:
+    - Gemfile
+    - Gemfile.lock
+    - app/controllers/application_controller.rb
+    - app/helpers/application_helper.rb
+    - config/initializers/pagy.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    Pure wiring slice. No new behavior to cover — Pagy's own test suite covers
+    its internals, and this slice only includes two modules and sets two
+    defaults. Slice 6 is the first real user of pagy() and carries the first
+    pagination request-spec assertions.
+
+assumptions:
+  - "pagy ~> 9.0 is maintained long enough to be safe pinning to. Pagy 9.x is the last major with the Backend/Frontend mixin API; the project jumped to 43.x with a complete rewrite. If 9.x goes EOL we will need a migration epic, but that's months away at earliest and well beyond Epic 2's horizon."
+  - "Pagy::DEFAULT is mutable in v9.x — it is frozen in v43.x, which is why the first install attempt (v43.5.0) blew up on Pagy::DEFAULT[:limit] = 25 with FrozenError. Pinning to ~> 9.0 restores the mutability and the classic API."
+
+specifications:
+  - "Every paginated query in this app uses limit: 25 unless explicitly overridden. Set once in the initializer; callers only specify a different limit when the page-size contract genuinely differs (not currently anticipated)."
+  - "Pagy overflow is :last_page — an out-of-range ?page=999 silently renders the last page rather than raising Pagy::OverflowError. For a public MVP this beats a 500 error; a future hardening epic may revisit if we want to 404 on bad params instead."
+
+deviations_from_plan: >
+  Mid-slice course correction: initial bundle add picked up pagy 43.5.0, which
+  has a ground-up-rewritten API (no Pagy::Backend, no Pagy::Frontend, frozen
+  DEFAULT hash). Specs failed with FrozenError and NameError. Fixed by
+  bundle remove + bundle add pagy --version '~> 9.0' to pin to the classic
+  mixin API series. The plan's 'include Pagy::Backend / Pagy::Frontend'
+  instructions assume the v9-and-earlier API, so the pin restores plan fidelity
+  rather than deviating from intent. Noted because a future reviewer grepping
+  for 'why pinned' will want to find this.
+
+trade_offs: >
+  Pinning pagy to a specific major series trades future-upgrade ease for
+  current clarity. Pagy 43.x likely has real improvements (the jump wasn't
+  accidental), but learning its new API mid-slice would have violated the
+  slice-purity rule — slice 5 is a chore slice, not a spike. If Pagy 43.x
+  proves worth adopting, it gets its own migration epic.
+
+  Alternative considered: vendor a simple offset paginator inline (30 lines).
+  Rejected because pagy's helpers (pagy_nav, pagy_info) are the reason we
+  chose pagy over hand-rolling in the first place, and v9.x gives us those
+  out of the box.
+
+interfaces:
+  published:
+    - "ApplicationController#pagy(collection, **opts) -> [Pagy, Collection]"
+    - "ApplicationHelper#pagy_nav(pagy) -> String"
+
+self_review:
+  slice_purity: "One concept — 'pagy is installed and the mixins are included.' No UI change, no pagination usage, no spec deletions."
+  consistency: "Both mixins follow the Pagy 9.x documented pattern verbatim — no custom wrapper, no decorator. Future readers who know Pagy will recognise it instantly."
+  docker_discipline: "bundle remove + bundle add both via bin/dc. No host-side gem operations."
+  version_pinning_rationale: "Pinned ~> 9.0 explicitly rather than unspecified because the v9 → v43 API break is real and would silently regress if a future dependabot bump lands. The pin is load-bearing."
+
+confidence: high
+reviewer_attention:
+  - "Gemfile (diff): the pagy line is pinned '~> 9.0', not loose. If dependabot opens a PR to bump to v10 (or beyond), that PR MUST include the Backend/Frontend API migration — do not merge it as a mechanical version bump."
+  - "config/initializers/pagy.rb:3-4 — Pagy::DEFAULT[:limit] = 25 is the single source of truth for page size. Changing it affects both the sites index (slice 10) and the check history table (slice 6). Intentional coupling."
