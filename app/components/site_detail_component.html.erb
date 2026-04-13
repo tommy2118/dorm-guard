@@ -1,0 +1,32 @@
+<section class="card bg-base-100 shadow-sm border border-base-200">
+  <div class="card-body">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 class="card-title text-2xl"><%= site.name %></h2>
+        <p class="mt-1">
+          <%= link_to site.url, site.url,
+                target: "_blank",
+                rel: "noopener noreferrer",
+                class: "link link-hover text-base-content/70" %>
+        </p>
+      </div>
+      <%= render(StatusBadgeComponent.new(status: site.status)) %>
+    </div>
+
+    <dl class="grid grid-cols-2 gap-4 mt-4 text-sm">
+      <div>
+        <dt class="text-base-content/60 uppercase tracking-wide text-xs">Interval</dt>
+        <dd class="mt-1"><%= site.interval_seconds %> seconds</dd>
+      </div>
+      <div>
+        <dt class="text-base-content/60 uppercase tracking-wide text-xs">Last checked</dt>
+        <dd class="mt-1"><%= last_checked_label %></dd>
+      </div>
+    </dl>
+
+    <div class="card-actions justify-end mt-4">
+      <%= link_to "Edit", edit_site_path(site), class: "btn btn-ghost btn-sm" %>
+      <%= render(DeleteButtonComponent.new(site: site)) %>
+    </div>
+  </div>
+</section>

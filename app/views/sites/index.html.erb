@@ -1,45 +1,58 @@
 <% content_for(:title) { "Sites — Dorm Guard" } %>
 
-<div style="max-width: 960px; margin: 0 auto; padding: 2rem 1rem;">
-  <h1 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem;">
-    Monitored Sites
-  </h1>
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-semibold">Monitored Sites</h1>
+  <%= link_to "New site", new_site_path, class: "btn btn-primary" %>
+</div>
 
-  <% if @sites.any? %>
-    <table style="width: 100%; border-collapse: collapse; font-size: 0.95rem;">
+<% if @sites.any? %>
+  <div class="overflow-x-auto">
+    <table class="table table-zebra">
       <thead>
-        <tr style="border-bottom: 2px solid #e5e7eb; text-align: left;">
-          <th style="padding: 0.75rem 0.5rem;">Name</th>
-          <th style="padding: 0.75rem 0.5rem;">URL</th>
-          <th style="padding: 0.75rem 0.5rem;">Status</th>
-          <th style="padding: 0.75rem 0.5rem;">Last Checked</th>
+        <tr>
+          <th>Name</th>
+          <th>URL</th>
+          <th>Status</th>
+          <th>Last Checked</th>
+          <th class="text-right">Actions</th>
         </tr>
       </thead>
       <tbody>
         <% @sites.each do |site| %>
-          <tr style="border-bottom: 1px solid #f3f4f6;">
-            <td style="padding: 0.75rem 0.5rem; font-weight: 500;"><%= site.name %></td>
-            <td style="padding: 0.75rem 0.5rem; color: #6b7280;">
-              <%= link_to site.url, site.url, target: "_blank", rel: "noopener noreferrer" %>
+          <tr>
+            <td class="font-medium"><%= site.name %></td>
+            <td>
+              <%= link_to site.url, site.url,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    class: "link link-hover" %>
             </td>
-            <td style="padding: 0.75rem 0.5rem;">
-              <%= render partial: "sites/status_badge", locals: { status: site.status } %>
+            <td>
+              <%= render(StatusBadgeComponent.new(status: site.status)) %>
             </td>
-            <td style="padding: 0.75rem 0.5rem; color: #6b7280;">
+            <td class="text-base-content/70">
               <% if site.last_checked_at %>
                 <%= time_ago_in_words(site.last_checked_at) %> ago
               <% else %>
                 Never
               <% end %>
             </td>
+            <td>
+              <div class="flex gap-2 justify-end">
+                <%= link_to "Show", site_path(site), class: "btn btn-ghost btn-sm" %>
+                <%= link_to "Edit", edit_site_path(site), class: "btn btn-ghost btn-sm" %>
+                <%= render(DeleteButtonComponent.new(site: site)) %>
+              </div>
+            </td>
           </tr>
         <% end %>
       </tbody>
     </table>
-  <% else %>
-    <p style="color: #6b7280; padding: 2rem 0;">
-      No sites monitored yet. Add some via <code>db/seeds.rb</code> and run
-      <code>bin/dc bin/rails db:seed</code>.
-    </p>
-  <% end %>
-</div>
+  </div>
+
+  <%= render(PagyNavComponent.new(pagy: @pagy)) %>
+<% else %>
+  <p class="text-base-content/70 py-8">
+    No sites monitored yet. Click <strong>New site</strong> to add the first one.
+  </p>
+<% end %>

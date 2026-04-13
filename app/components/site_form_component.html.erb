@@ -1,0 +1,39 @@
+<h1 class="text-2xl font-semibold mb-6"><%= heading %></h1>
+
+<%= form_with(model: site, local: true, class: "card bg-base-100 shadow-sm border border-base-200") do |f| %>
+  <div class="card-body space-y-4">
+    <div class="form-control">
+      <%= f.label :name, class: "label label-text font-medium" %>
+      <%= f.text_field :name,
+            class: "input input-bordered w-full#{' input-error' if field_error(:name)}" %>
+      <% if (msg = field_error(:name)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="form-control">
+      <%= f.label :url, class: "label label-text font-medium" %>
+      <%= f.url_field :url,
+            class: "input input-bordered w-full#{' input-error' if field_error(:url)}",
+            placeholder: "https://example.com" %>
+      <% if (msg = field_error(:url)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="form-control">
+      <%= f.label :interval_seconds, "Interval (seconds)", class: "label label-text font-medium" %>
+      <%= f.number_field :interval_seconds,
+            min: Site::MIN_INTERVAL_SECONDS,
+            class: "input input-bordered w-full#{' input-error' if field_error(:interval_seconds)}" %>
+      <% if (msg = field_error(:interval_seconds)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="card-actions justify-end">
+      <%= link_to "Cancel", sites_path, class: "btn btn-ghost" %>
+      <%= f.submit submit_label, class: "btn btn-primary" %>
+    </div>
+  </div>
+<% end %>

@@ -3,6 +3,8 @@ class Site < ApplicationRecord
 
   enum :status, { unknown: 0, up: 1, down: 2 }, default: :unknown
 
+  has_many :check_results, dependent: :destroy
+
   validates :name, presence: true
   validates :url, presence: true, format: {
     with: URI::DEFAULT_PARSER.make_regexp(%w[http https]),

@@ -36,3 +36,6 @@
 # Local Claude Code project settings (per-developer, not committed).
 /.claude/
 
+
+/app/assets/builds/*
+!/app/assets/builds/.keep

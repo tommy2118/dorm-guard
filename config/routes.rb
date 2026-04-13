@@ -9,12 +9,13 @@ Rails.application.routes.draw do
   # to see captured outbound mail without configuring SMTP.
   if Rails.env.development?
     mount LetterOpenerWeb::Engine, at: "/letter_opener"
+    mount Lookbook::Engine, at: "/lookbook"
   end
 
   # Render dynamic PWA files from app/views/pwa/* (remember to link manifest in application.html.erb)
   # get "manifest" => "rails/pwa#manifest", as: :pwa_manifest
   # get "service-worker" => "rails/pwa#service_worker", as: :pwa_service_worker
 
-  resources :sites, only: [ :index ]
+  resources :sites, only: [ :index, :show, :new, :create, :edit, :update, :destroy ]
   root "sites#index"
 end
