@@ -1,0 +1,89 @@
+intent: >
+  Escape `\$VAR` inside .kamal/secrets shell substitutions so
+  Kamal's dotenv parser doesn't pre-expand them with its own
+  (empty) process env before shell-executing. Third mental-model
+  correction in the .kamal/secrets saga — the file is dotenv
+  with command substitution, not a shell script.
+
+slice: 6h/9
+kind: fix
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - .kamal/secrets
+  actual:
+    - .kamal/secrets
+  drift: []
+
+proof:
+  tests_run: bin/dc kamal secrets print
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Kamal-specific dotenv interaction. Verified via the canonical
+    command (`kamal secrets print`) which is what kamal itself
+    runs during deploy.
+
+verification:
+  tested: []
+  manual:
+    - "bin/dc kamal secrets print — reports every secret with a non-zero length: RAILS_MASTER_KEY=32, KAMAL_REGISTRY_PASSWORD=71, SMTP_USER_NAME=20, SMTP_PASSWORD=44, DORM_GUARD_ALERT_TO=26"
+    - "Cross-checked against known values: KAMAL_REGISTRY_PASSWORD is the dop_v1_... token (71 chars), SMTP_USER_NAME is the SES IAM access key (20 chars AKIA...)"
+
+assumptions:
+  - "Kamal 2.11's InlineCommandSubstitution continues to run Dotenv::Substitutions::Variable.call on the command string before shell execution. Behavior is documented in kamal's own source at kamal-2.11.0/lib/kamal/secrets/dotenv/inline_command_substitution.rb — confirmed by reading it."
+  - "Dotenv's variable substitution honors backslash-escaping. The dotenv gem's behavior is stable across 2.x releases."
+
+specifications:
+  - ".kamal/secrets is a dotenv-format file parsed by kamal's Dotenv wrapper, NOT a shell script. Arbitrary shell statements (set -a, source, function definitions, if blocks) are IGNORED because dotenv only reads KEY=value lines."
+  - "Shell variable references INSIDE a $(...) command substitution must be escaped as \\$VAR or they will be pre-substituted by dotenv using kamal's own process env. This is the exact opposite of how a shell script works, and it's a well-known papercut for anyone coming to kamal's secrets file from a shell background."
+  - "The pattern `$(. ./.env 2>/dev/null; echo \"\\$VAR\")` is the canonical shape for 'read VAR from a local .env file' in this project's .kamal/secrets. Every secret line uses the same shape for consistency; any new secret added should follow the same pattern."
+
+deviations_from_plan: >
+  Eighth letter-suffixed mid-flight insertion in Epic 3 (5B through 5H). This is the third bug in .kamal/secrets alone — Slices 5F, 5G, 5H are all fixes to the same file. Each one uncovered a new layer: wrong-script-path, bash-only-source, dotenv-vs-shell-semantics.
+
+trade_offs: >
+  Could have used an external helper script (e.g. `.kamal/load_env KEY`)
+  invoked from .kamal/secrets to abstract the sourcing logic. Rejected:
+  adds a new file, splits the concern across two places, and the
+  per-line subshell pattern is a well-known dotenv idiom that future
+  readers are more likely to recognize than a project-specific helper.
+
+  Could have set kamal's secrets format to something simpler like
+  plain KEY=VALUE with the operator maintaining .kamal/secrets and
+  .env in lockstep. Rejected: doubles the place where secrets are
+  managed, and the whole point of .env is that it's the single
+  local source of truth.
+
+self_review:
+  consistency: "Every secret line follows the same shape. If a future secret is added, the pattern is obvious from the existing lines."
+  how_could_this_have_been_caught_earlier: >
+    Slice 4 (wire kamal config) did not verify that kamal.secrets.print
+    (or equivalent) returns non-empty values — only that `kamal config`
+    parses the YAML. The lesson applies broadly: when introducing a
+    secrets plumbing path, the verification step must check the
+    RESOLVED values, not just the config shape. A proper check would
+    have caught this in Slice 4 before Slice 6 started hitting docker
+    login failures.
+  why_three_iterations: >
+    Slices 5F, 5G, 5H all touched .kamal/secrets because each fix
+    revealed the next layer of the onion:
+    - 5F: $0/dirname was wrong (bash script assumption)
+    - 5G: source is bash-only (shell portability assumption)
+    - 5H (this): dotenv pre-substitution (kamal-internal assumption)
+    The pattern was 'fix the obvious symptom, rerun, hit the next
+    layer'. A better approach would have been reading kamal's
+    secrets.rb source first — which is what finally revealed the
+    actual semantics. Lesson: when something 'should just work' but
+    doesn't, read the implementation before guessing.
+
+principle_violations: []
+
+confidence: high
+reviewer_attention:
+  - .kamal/secrets:38-46   # The 4 secret lines. The `\$VAR` escaping is load-bearing — remove the backslash and every secret goes back to empty. The comment block above the lines explains why; future maintainers MUST read it before editing.
