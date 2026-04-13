@@ -8,6 +8,13 @@ services:
 
     volumes:
     - ../../dorm_guard:/workspaces/dorm_guard:cached
+    # Mount the host's Docker socket so `bin/dc kamal ...` (and any other
+    # docker-touching command) can reach the host engine without running a
+    # docker daemon inside the devcontainer. On macOS this resolves via
+    # Docker Desktop's socket at ~/.docker/run/docker.sock (symlinked by
+    # Docker Desktop to /var/run/docker.sock on the host). On Linux it's
+    # the host daemon's socket directly.
+    - /var/run/docker.sock:/var/run/docker.sock
 
     ports:
     - "3000:3000"
