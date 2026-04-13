@@ -85,3 +85,5 @@ gem "tailwindcss-rails", "~> 4.4"
 
 gem "view_component", "~> 4.6"
 gem "lookbook", "~> 2.3"
+
+gem "pagy", "~> 9.0"
