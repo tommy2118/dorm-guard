@@ -59,9 +59,15 @@ env:
     # config.host_authorization, and config.action_mailer.default_url_options.
     DORM_GUARD_HOST: dorm-guard.com
 
-    # Outbound mailer sender. Must be a verified SES identity (or on a
-    # verified SES domain once the sandbox is lifted).
-    DORM_GUARD_MAIL_FROM: dorm-guard@dorm-guard.com
+    # Outbound mailer sender. MUST be a verified SES identity while SES
+    # is in sandbox mode — and the SES-SendOnly IAM policy attached to
+    # dorm-guard-ses-smtp restricts `ses:FromAddress` to exactly this
+    # address. Any other sender value will be rejected by SES at send
+    # time. Verifying the dorm-guard.com domain as a full sending
+    # identity (so we can use dorm-guard@dorm-guard.com here) requires
+    # SPF/DKIM/DMARC DNS records — out of scope for Epic 3, tracked as
+    # a follow-up issue.
+    DORM_GUARD_MAIL_FROM: tommy.caruso2118@gmail.com
 
     # SMTP endpoint. Provider-neutral naming — currently pointed at
     # Amazon SES us-east-1. Swap providers via .env / kamal env push,
