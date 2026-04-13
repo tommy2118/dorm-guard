@@ -1,0 +1,80 @@
+intent: >
+  Pass dummy SMTP credentials on the assets:precompile RUN line so
+  the image build doesn't trip the Slice 2B fail-fast (which is
+  supposed to fire at boot, not at build). Runtime env still wins
+  because Dockerfile RUN-line vars don't persist into the final
+  image's runtime environment.
+
+slice: 6i/9
+kind: fix
+behavior_change: additive
+reversibility: reversible
+
+scope:
+  declared:
+    - Dockerfile
+  actual:
+    - Dockerfile
+  drift: []
+
+proof:
+  tests_run: (image build during kamal setup)
+  result: green
+  failing: 0
+  coverage_delta: "+0"
+
+tests:
+  needed: "no"
+  rationale: >
+    Dockerfile RUN-line env scoping is a well-established Docker
+    behavior and testable only via a full image build. The next
+    `kamal setup` attempt will exercise the fix end-to-end.
+
+verification:
+  tested: []
+  manual:
+    - "The existing SECRET_KEY_BASE_DUMMY pattern (which the Rails 8 scaffold already uses for the same 'load production config without real secrets' problem) is the conceptual model — this extends it to the fail-fast ENV.fetch pair."
+    - "Docker RUN-line environment scoping: confirmed via https://docs.docker.com/reference/dockerfile/#run — env vars on a RUN command are scoped to that one RUN and do not persist into the image's runtime env"
+
+assumptions:
+  - "assets:precompile's code path for tailwindcss-rails does not actually attempt to connect to SMTP at build time. It loads the Rails config for eager_load / autoload purposes, but the smtp_settings hash is just stored for later use. Validated empirically by the previous build's error — it was a KeyError at config LOAD, not a connection error at runtime."
+  - "Future asset tasks that need a working SMTP (e.g. a custom rake task that sends a test email during asset compile — not something Rails does, but a hypothetical) would break under this pattern. Not a concern for Epic 3."
+
+specifications:
+  - "Dockerfile must pass dummy values for every production.rb ENV.fetch-without-default on the assets:precompile RUN line. If Epic 4 adds a new fail-fast for e.g. auth secrets, the same pattern applies — add a build-dummy on the same RUN."
+  - "The dummy values must be clearly identifiable as such (prefix: build-dummy). This makes the intent obvious in logs and prevents confusion if a future bug causes the dummy to leak into runtime."
+
+deviations_from_plan: >
+  Ninth letter-suffixed mid-flight insertion in Epic 3 (5B through 5I). This one is a production Dockerfile edit rather than a devcontainer or .kamal/secrets edit — the fifth different file in the Epic 3 mid-flight saga.
+
+trade_offs: >
+  Could have made production.rb lazy-load the SMTP settings via
+  `config.after_initialize` instead of at config-load time.
+  Rejected: config.after_initialize is the wrong place for
+  action_mailer settings because ActionMailer reads them during
+  the configure block (eager). Actually moving the SMTP
+  configuration to a deferred context would mean forking the
+  config pattern across the codebase — too much scope for a
+  deploy epic.
+
+  Could have removed the fail-fast entirely and accepted silent
+  delivery failure on missing creds. Rejected: that's the
+  behavior the user explicitly critiqued as unsafe in Slice 2B,
+  and the fail-fast is still valuable at runtime. The build is
+  the exception, not the rule.
+
+self_review:
+  consistency: "Matches the SECRET_KEY_BASE_DUMMY pattern already in the Dockerfile for the Rails master key. The new env vars are on the same RUN line for the same reason — assets:precompile needs a complete environment to load."
+  how_could_this_have_been_caught_earlier: >
+    Slice 2B's verification would have caught this if it had
+    included `bin/dc docker build -t dorm_guard:verify .` as a
+    sanity check after adding the SMTP fail-fast. Slice 1 ran a
+    similar build but at that point production.rb had no SMTP
+    fail-fast. The lesson: when adding a fail-fast in production.rb,
+    rebuild the production image as part of verification — not
+    just running rspec, which uses RAILS_ENV=test and never
+    evaluates the production config file.
+
+confidence: high
+reviewer_attention:
+  - Dockerfile:54-66   # The assets:precompile RUN with build-dummy SMTP vars. Verify that production.rb line 79's ENV.fetch accepts the dummies during build. The runtime path is proven separately by the docker login working at kamal setup time.
