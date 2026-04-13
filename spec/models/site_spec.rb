@@ -70,6 +70,32 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "check_results association" do
+    let(:site) { described_class.create!(valid_attrs) }
+
+    it "starts with no check results" do
+      expect(site.check_results).to be_empty
+    end
+
+    it "lets check results be associated via the reverse side" do
+      result = site.check_results.create!(
+        status_code: 200,
+        response_time_ms: 123,
+        checked_at: Time.current
+      )
+      expect(site.reload.check_results).to contain_exactly(result)
+    end
+
+    it "cascade-deletes check results when the site is destroyed" do
+      site.check_results.create!(
+        status_code: 200,
+        response_time_ms: 123,
+        checked_at: Time.current
+      )
+      expect { site.destroy }.to change(CheckResult, :count).from(1).to(0)
+    end
+  end
+
   describe "#due?" do
     it "is true when the site has never been checked" do
       site = described_class.new(valid_attrs.merge(last_checked_at: nil))
