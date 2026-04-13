@@ -1,0 +1,90 @@
+intent: >
+  Install ViewComponent + Lookbook, mount Lookbook in development, and prove the
+  wiring with a throwaway placeholder component. Second half of the view stack
+  infrastructure, used by every slice from 3 onward.
+
+slice: 2/10
+kind: chore
+behavior_change: none
+
+reversibility: reversible
+
+scope:
+  declared:
+    - Gemfile
+    - Gemfile.lock
+    - config/initializers/view_component.rb
+    - config/routes.rb
+    - app/components/application_component.rb
+    - app/components/placeholder_component.rb
+    - app/components/placeholder_component.html.erb
+    - spec/components/previews/placeholder_component_preview.rb
+    - spec/rails_helper.rb
+  actual:
+    - Gemfile
+    - Gemfile.lock
+    - app/components/application_component.rb
+    - app/components/placeholder_component.html.erb
+    - app/components/placeholder_component.rb
+    - config/initializers/view_component.rb
+    - config/routes.rb
+    - spec/components/previews/placeholder_component_preview.rb
+    - spec/rails_helper.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    Infrastructure slice. PlaceholderComponent is a throwaway removed in slice 3 —
+    no point speccing it. ViewComponent's own unit-test machinery is exercised
+    implicitly by slice 3's real component specs. Lookbook engine mount is
+    verified by grepping bin/rails routes for /lookbook.
+
+verification:
+  tested:
+    - "bin/dc bundle exec rspec — 60/60 green, unchanged from slice 1"
+    - "bin/dc bin/rails routes | grep lookbook — Lookbook::Engine mounted at /lookbook"
+  manual:
+    - "Did NOT boot a browser against /lookbook to visually verify rendering. The route-table and green-rspec checks are sufficient proof of wiring; slice 3's real components will exercise Lookbook visually when the user opens it."
+
+assumptions:
+  - "view_component 4.6 + lookbook 2.3 are API-compatible with each other and with Rails 8.1. Their combined default config works in development without extra lookbook-specific initializers."
+  - "Setting previews.paths via assignment (not <<) is the v4.x supported API — the v3-era <<-on-nil pattern fails because previews.paths is nil until first access, and the array becomes frozen after config freezing."
+
+specifications:
+  - "Every ViewComponent in this app inherits from ApplicationComponent, which inherits from ViewComponent::Base — same pattern as ApplicationController/ApplicationRecord. This is the extension seam for app-wide helpers."
+  - "Component previews live at spec/components/previews/<name>_component_preview.rb and use ViewComponent::Preview, not a Lookbook-specific base class. Lookbook discovers them via ViewComponent's preview_paths config."
+  - "Lookbook mount is gated on Rails.env.development? — it is never exposed in test or production."
+
+deviations_from_plan: >
+  None substantive. The initializer went through one wrong-API-shape iteration
+  (preview_paths → previews.paths) during drafting; final state matches plan.
+
+trade_offs: >
+  PlaceholderComponent is strictly throwaway — it ships in this slice and dies
+  in slice 3. Alternative: make slice 2 install the infrastructure AND migrate
+  StatusBadgeComponent in one commit. Rejected because (a) that conflates
+  stack-install risk with view-migration risk, (b) it would leave slice 2 with
+  two concepts instead of one, and (c) slice 3 needs to touch the layout and
+  index in a coherent set anyway. One throwaway commit is cheap.
+
+interfaces:
+  published:
+    - ApplicationComponent  # base class — every component from slice 3 onward inherits
+
+self_review:
+  consistency: "Base class naming (ApplicationComponent) matches Rails convention for app-wide base classes (ApplicationController, ApplicationRecord, ApplicationJob, ApplicationMailer)."
+  slice_purity: "One concept — 'the view stack component/preview layer is installed.' No DaisyUI classes, no Epic 1 view migration, no CRUD, no product behavior."
+  docker_discipline: "All bundler + rails commands routed through bin/dc per CLAUDE.md rule 1. No host-side Ruby invocation."
+  placeholder_discipline: "PlaceholderComponent is a single <p> tag with no classes — deliberately NOT using DaisyUI classes, so slice 3 owns the first real design decision rather than inheriting a style from this slice's throwaway."
+
+confidence: high
+reviewer_attention:
+  - "config/initializers/view_component.rb:1-3 — the v4 previews.paths API. Easy to regress to the v3 preview_paths shape on upgrade."
+  - "spec/rails_helper.rb (diff) — the require 'view_component/test_helpers' line and the :component-type config.include. Component specs in slice 3 onward depend on both."
