@@ -1,0 +1,70 @@
+intent: >
+  Replace @site.destroy with @site.destroy! in SitesController#destroy so a
+  veto failure surfaces as ActiveRecord::RecordNotDestroyed instead of
+  silently rendering "Site deleted." while the record remains.
+
+slice: 12/12
+kind: fix
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared:
+    - app/controllers/sites_controller.rb
+  actual:
+    - app/controllers/sites_controller.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    No new test added for the failure case. Existing destroy specs from slice 9
+    (happy path + cascade-deletion) still pass because destroy! returns the
+    record on success, identical to destroy. Constructing a failure case in a
+    spec would require either (a) mocking Site (forbidden by CLAUDE.md —
+    don't mock what you own when reality is cheaper) or (b) stubbing
+    before_destroy to return false (invasive monkey-patch on a model with no
+    real veto callbacks). The fix is a one-character change with a clear
+    failure mode, and dev-time exceptions are louder than spec assertions
+    here. A future epic that adds a real veto callback (audit log, soft
+    delete, payment hold) MUST add a failure-path spec at the same time,
+    not in this slice.
+
+addresses:
+  - "#20 comment 3072949838"
+
+assumptions:
+  - "ActiveRecord::RecordNotDestroyed propagates through the controller and lands in Rails' default exception handler. Rails 8 dev env shows the exception in the browser; production renders the standard 500 page. No custom rescue_from in SitesController, no custom 500 page registered — both are Epic 4 hardening concerns."
+
+specifications:
+  - "SitesController#destroy uses the bang variant of destroy. Any future code that touches this action MUST keep it bang — silently downgrading to non-bang would re-introduce the latent silent-failure pattern this slice was specifically created to fix."
+
+deviations_from_plan: addressing review feedback
+
+trade_offs: >
+  Bang method vs explicit if-branching. `@site.destroy!` (chosen) raises and
+  propagates — failure mode is loud and hits dev.log. Alternative:
+  `if @site.destroy ... else render :show, alert: "Could not delete." end`
+  — failure mode is graceful and user-visible. Rejected because (a) Site
+  has no veto callbacks today, so the graceful path is theoretical; (b) when
+  a real veto lands in a future epic, that epic should design its own
+  failure UX rather than inherit a placeholder; (c) loud-by-default is the
+  right choice when there is no real failure case to design for. The bang
+  is honest about 'this should never fail under current rules'.
+
+self_review:
+  consistency: "Matches the pattern Rails 8 uses elsewhere — destroy! is the bang variant of destroy and is the conventional choice when failure is exceptional. No new pattern introduced."
+  metz: "SitesController unchanged in line/method count. Single character delta."
+  testing_boundary_pragmatic: "Skipping the failure-path spec is honest, not lazy. The note documents WHY it's skipped so a future reviewer doesn't add the wrong test (e.g., a mock-heavy spec that mocks Site)."
+  review_driven_discipline: "Slice 12 exists ONLY because the pr-review accuracy pass on PR #20 raised this as a verify-level finding. addresses field carries the comment id so the link is permanent. deviations_from_plan: addressing review feedback per the agent-notes convention."
+
+confidence: high
+reviewer_attention:
+  - "app/controllers/sites_controller.rb:38 — the single character change. The bang is load-bearing; non-bang would silently re-introduce the bug this slice was created to fix."
