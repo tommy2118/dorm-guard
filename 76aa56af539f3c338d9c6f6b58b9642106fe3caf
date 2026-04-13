@@ -1,0 +1,82 @@
+intent: >
+  Fix the .kamal/secrets .env sourcing line — $(dirname "$0")
+  doesn't work in a sourced script, so plain `source .env` is
+  correct since Kamal runs from the Rails root.
+
+slice: 6f/9
+kind: fix
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - .kamal/secrets
+  actual:
+    - .kamal/secrets
+  drift: []
+
+proof:
+  tests_run: bin/dc bash -c 'source .kamal/secrets; env | grep -E "KAMAL_REGISTRY|SMTP_USER|SMTP_PASSWORD|DORM_GUARD_ALERT|RAILS_MASTER"'
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Shell-script bug fix. Verified via direct shell sourcing and
+    variable inspection. An automated spec for .kamal/secrets
+    would need to shell out to bash and inspect env — fragile
+    and duplicates what kamal does at deploy time anyway.
+
+verification:
+  tested: []
+  manual:
+    - "bin/dc bash -c 'source .kamal/secrets && echo $KAMAL_REGISTRY_PASSWORD' — previously: empty; now: dop_v1_8166f0d0..."
+    - "All five re-exported secrets resolve: KAMAL_REGISTRY_PASSWORD, SMTP_USER_NAME, SMTP_PASSWORD, DORM_GUARD_ALERT_TO, RAILS_MASTER_KEY"
+
+assumptions:
+  - "Kamal sources .kamal/secrets with the Rails root as CWD. Every Kamal workflow I've seen confirms this — `kamal deploy` runs from the directory containing config/deploy.yml. If a future Kamal version changes this, the `source .env` line becomes wrong and must use ${BASH_SOURCE[0]} instead."
+
+specifications:
+  - ".kamal/secrets must be safe to `source` from any shell — not safe to invoke directly. $0 is unreliable in a sourced script; ${BASH_SOURCE[0]} is the correct bash idiom for 'the script's own path regardless of invocation mode' if we ever need to reference the script's own location."
+
+deviations_from_plan: >
+  Not in the original 9-slice plan. Latent bug from Slice 4 (92b1831) caught by Slice 6's fourth attempt. Numbered 6f/9 — sixth letter-suffixed mid-flight insertion in Epic 3 (5B / 5C / 5D / 5E / 5F, now this fix landing between 5E and 6).
+
+trade_offs: >
+  Chose `source .env` over `source "$(dirname "${BASH_SOURCE[0]}")/../.env"`.
+  The ${BASH_SOURCE[0]} form would be CWD-independent but adds
+  complexity and a dependency on bash-specific behavior (zsh
+  handles BASH_SOURCE differently). The plain relative path
+  works because Kamal's convention is to run from the Rails
+  root. If that convention changes, this fails loudly at deploy
+  time (empty secrets → docker login prompt) rather than
+  silently.
+
+principle_violations: []
+
+self_review:
+  consistency: "Matches .kamal/secrets's existing 'fail loud on real problems, swallow expected absence' pattern via `2>/dev/null || true` on the source call itself — so a missing .env in CI during early Slice 8 work won't crash the script."
+  error_handling: >
+    The `|| true` on source means a missing .env doesn't kill
+    the script — downstream lines will see empty re-exports, and
+    downstream commands (docker login, smtp send) will then fail
+    loudly with an actionable error. This is the right layer to
+    catch 'the operator forgot to create .env' — better than
+    crashing in .kamal/secrets itself with a cryptic 'no such
+    file' message.
+  how_could_this_have_been_caught_earlier: >
+    A spec that sources .kamal/secrets in a subshell and checks
+    the var resolution would have caught this at Slice 4 commit
+    time. The original .kamal/secrets commit's agent-note had
+    'manual verification: bin/dc bin/kamal config parses cleanly'
+    as proof, but kamal config doesn't actually test secret
+    resolution for login flows — only that the config file has
+    valid structure. Future lesson: verification of secret plumbing
+    should include an actual 'source and grep the env' step, not
+    just 'config parses'. Adding a note to the Slice 4 self-review
+    loop is out of scope, but the lesson is recorded here.
+
+confidence: high
+reviewer_attention:
+  - .kamal/secrets:18-27   # The source line and the `|| true` swallowing. If Kamal ever changes its CWD convention this breaks silently at deploy, not loudly at test. A future assertion in a CI step that runs `source .kamal/secrets && [ -n "$KAMAL_REGISTRY_PASSWORD" ]` would be a good guardrail.
