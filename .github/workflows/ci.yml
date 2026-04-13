@@ -80,6 +80,11 @@ jobs:
         with:
           bundler-cache: true
 
+      - name: Build Tailwind CSS
+        env:
+          RAILS_ENV: test
+        run: bin/rails tailwindcss:build
+
       - name: Run RSpec (non-system specs)
         env:
           RAILS_ENV: test
@@ -101,6 +106,11 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           bundler-cache: true
+
+      - name: Build Tailwind CSS
+        env:
+          RAILS_ENV: test
+        run: bin/rails tailwindcss:build
 
       - name: Run system specs
         env:
