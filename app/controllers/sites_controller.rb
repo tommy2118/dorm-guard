@@ -1,5 +1,5 @@
 class SitesController < ApplicationController
-  before_action :set_site, only: [ :show ]
+  before_action :set_site, only: [ :show, :edit, :update ]
 
   def index
     @sites = Site.order(:name)
@@ -20,6 +20,17 @@ class SitesController < ApplicationController
       redirect_to sites_path, notice: "Site created."
     else
       render :new, status: :unprocessable_content
+    end
+  end
+
+  def edit
+  end
+
+  def update
+    if @site.update(site_params)
+      redirect_to sites_path, notice: "Site updated."
+    else
+      render :edit, status: :unprocessable_content
     end
   end
 

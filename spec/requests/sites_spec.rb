@@ -164,4 +164,63 @@ RSpec.describe "Sites", type: :request do
       expect(response.body).to include("can&#39;t be blank").or include("is invalid")
     end
   end
+
+  describe "GET /sites/:id/edit" do
+    let(:site) do
+      Site.create!(
+        name: "Example",
+        url: "https://example.com",
+        interval_seconds: 60
+      )
+    end
+
+    it "returns http success" do
+      get edit_site_path(site)
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "renders the site form pre-filled with the existing record" do
+      get edit_site_path(site)
+      expect(response.body).to include("Example")
+      expect(response.body).to include("https://example.com")
+      expect(response.body).to include("Update site")
+    end
+
+    it "returns 404 when the site does not exist" do
+      get edit_site_path(id: 999_999)
+      expect(response).to have_http_status(:not_found)
+    end
+  end
+
+  describe "PATCH /sites/:id" do
+    let(:site) do
+      Site.create!(
+        name: "Example",
+        url: "https://example.com",
+        interval_seconds: 60
+      )
+    end
+
+    it "updates a site with valid params and redirects to the index" do
+      patch site_path(site), params: { site: { interval_seconds: 120 } }
+
+      expect(site.reload.interval_seconds).to eq(120)
+      expect(response).to redirect_to(sites_path)
+      follow_redirect!
+      expect(response.body).to include("Site updated.")
+    end
+
+    it "ignores user-supplied status" do
+      patch site_path(site), params: { site: { status: "up" } }
+      expect(site.reload.status).to eq("unknown")
+    end
+
+    it "rejects invalid params with 422 and does not mutate the site" do
+      patch site_path(site), params: { site: { name: "", interval_seconds: 10 } }
+
+      expect(site.reload.name).to eq("Example")
+      expect(site.reload.interval_seconds).to eq(60)
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+  end
 end
