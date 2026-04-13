@@ -58,9 +58,24 @@ Rails.application.configure do
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = { database: { writing: :queue } }
 
-  # Ignore bad email addresses and do not raise email delivery errors.
-  # Set this to true and configure the email server for immediate delivery to raise delivery errors.
-  # config.action_mailer.raise_delivery_errors = false
+  # Deliver mail through Mailgun SMTP. Accepted trade-off: delivery
+  # errors are swallowed so a transient SMTP hiccup doesn't pollute
+  # Solid Queue's failed-job table on every downtime alert. Cost: a
+  # Mailgun outage or credential rot will silently drop alerts —
+  # smoke testing and the Mailgun dashboard are the external
+  # backstops. Revisit in Epic 6 when mail is one of several alert
+  # channels and per-channel error visibility matters more.
+  config.action_mailer.delivery_method = :smtp
+  config.action_mailer.perform_deliveries = true
+  config.action_mailer.raise_delivery_errors = false
+  config.action_mailer.smtp_settings = {
+    address:              ENV.fetch("MAILGUN_SMTP_ADDRESS", "smtp.mailgun.org"),
+    port:                 ENV.fetch("MAILGUN_SMTP_PORT", "587").to_i,
+    user_name:            ENV.fetch("MAILGUN_SMTP_USER_NAME"),
+    password:             ENV.fetch("MAILGUN_SMTP_PASSWORD"),
+    authentication:       :plain,
+    enable_starttls_auto: true
+  }
 
   # Set host to be used by links generated in mailer templates. Host comes
   # from ENV so the same image deploys to any domain.
@@ -68,15 +83,6 @@ Rails.application.configure do
     host: ENV.fetch("DORM_GUARD_HOST", "dorm-guard.com"),
     protocol: "https"
   }
-
-  # Specify outgoing SMTP server. Remember to add smtp/* credentials via bin/rails credentials:edit.
-  # config.action_mailer.smtp_settings = {
-  #   user_name: Rails.application.credentials.dig(:smtp, :user_name),
-  #   password: Rails.application.credentials.dig(:smtp, :password),
-  #   address: "smtp.example.com",
-  #   port: 587,
-  #   authentication: :plain
-  # }
 
   # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
   # the I18n.default_locale when a translation cannot be found).
