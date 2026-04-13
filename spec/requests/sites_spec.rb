@@ -55,12 +55,14 @@ RSpec.describe "Sites", type: :request do
       # Total: 25 sites (2 let!s + 23 extras). Still within one page.
 
       get sites_path
-      expect(response.body).not_to include("pagy")
+      expect(response.body).not_to include("aria-label=\"Pagination\"")
 
       Site.create!(name: "Overflow A", url: "https://example.com/a", interval_seconds: 60)
 
       get sites_path
-      expect(response.body).to include("pagy")
+      expect(response.body).to include("aria-label=\"Pagination\"")
+      expect(response.body).to include("join-item")
+      expect(response.body).not_to include("&lt;nav")
     end
   end
 
@@ -113,7 +115,9 @@ RSpec.describe "Sites", type: :request do
       get site_path(site)
 
       expect(response.body.scan(/<tr>/).count - 1).to eq(25)
-      expect(response.body).to include("pagy")
+      expect(response.body).to include("aria-label=\"Pagination\"")
+      expect(response.body).to include("join-item")
+      expect(response.body).not_to include("&lt;nav")
     end
 
     it "returns 404 when the site does not exist" do

@@ -1,0 +1,30 @@
+<nav class="mt-6 flex justify-center" aria-label="Pagination">
+  <div class="join">
+    <% if pagy.prev %>
+      <%= link_to "«", url_for_page(pagy.prev),
+            class: "join-item btn btn-sm",
+            aria: { label: "Previous page" } %>
+    <% else %>
+      <span class="join-item btn btn-sm btn-disabled" aria-disabled="true">«</span>
+    <% end %>
+
+    <% pagy.series.each do |item| %>
+      <% case item %>
+      <% when Integer %>
+        <%= link_to item, url_for_page(item), class: "join-item btn btn-sm" %>
+      <% when String %>
+        <span class="join-item btn btn-sm btn-active" aria-current="page"><%= item %></span>
+      <% when :gap %>
+        <span class="join-item btn btn-sm btn-disabled" aria-disabled="true">…</span>
+      <% end %>
+    <% end %>
+
+    <% if pagy.next %>
+      <%= link_to "»", url_for_page(pagy.next),
+            class: "join-item btn btn-sm",
+            aria: { label: "Next page" } %>
+    <% else %>
+      <span class="join-item btn btn-sm btn-disabled" aria-disabled="true">»</span>
+    <% end %>
+  </div>
+</nav>

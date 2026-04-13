@@ -50,9 +50,7 @@
     </table>
   </div>
 
-  <% if @pagy.pages > 1 %>
-    <nav class="mt-6"><%== pagy_nav(@pagy) %></nav>
-  <% end %>
+  <%= render(PagyNavComponent.new(pagy: @pagy)) %>
 <% else %>
   <p class="text-base-content/70 py-8">
     No sites monitored yet. Click <strong>New site</strong> to add the first one.

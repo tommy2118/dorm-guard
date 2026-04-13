@@ -5,5 +5,5 @@
 <section class="mt-8">
   <h3 class="text-xl font-semibold mb-4">Check history</h3>
   <%= render(CheckHistoryTableComponent.new(results: @check_results)) %>
-  <%= pagy_nav(@pagy) if @pagy.pages > 1 %>
+  <%= render(PagyNavComponent.new(pagy: @pagy)) %>
 </section>
