@@ -9,6 +9,7 @@ abort("The Rails environment is running in production mode!") if Rails.env.produ
 # return unless Rails.env.test?
 require 'rspec/rails'
 require 'webmock/rspec'
+require 'view_component/test_helpers'
 # Add additional requires below this line. Rails is not loaded until this point!
 
 # webmock disables real HTTP by default. Localhost is allowed so that e.g.
@@ -70,6 +71,9 @@ RSpec.configure do |config|
   #
   # To enable this behaviour uncomment the line below.
   # config.infer_spec_type_from_file_location!
+
+  # ViewComponent test helpers (render_inline, etc.) for component specs.
+  config.include ViewComponent::TestHelpers, type: :component
 
   # Filter lines from Rails gems in backtraces.
   config.filter_rails_from_backtrace!
