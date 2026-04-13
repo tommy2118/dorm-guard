@@ -1,0 +1,58 @@
+intent: >
+  Install the docker buildx plugin in the devcontainer so Kamal
+  can cross-build an amd64 production image from this arm64 Mac.
+  Third mid-flight fix in the Slice 5C/D/E devcontainer series —
+  the plugin wasn't included in Slice 5C's static CLI binary and
+  Kamal refuses to build without it.
+
+slice: 6e/9
+kind: chore
+behavior_change: additive
+reversibility: reversible
+
+scope:
+  declared:
+    - .devcontainer/Dockerfile
+  actual:
+    - .devcontainer/Dockerfile
+  drift: []
+
+proof:
+  tests_run: bin/dc docker buildx version
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: "Infrastructure install with no Ruby code touched. Verified via `docker buildx version` inside the rebuilt container."
+
+verification:
+  tested: []
+  manual:
+    - "bin/dc docker buildx version → 'github.com/docker/buildx v0.19.0' — plugin is discovered from /usr/local/libexec/docker/cli-plugins/docker-buildx"
+    - "bin/dc bundle install — gems reinstalled in the rebuilt container (rebuild blew away the previous bundle state, same pattern as 5C rebuild)"
+
+assumptions:
+  - "github.com/docker/buildx v0.19.0 is API-compatible with Docker CLI 27.3.1 and Docker daemon 29.x. buildx is a client-side plugin — server version compat is determined by buildkit, which is bundled into the daemon on Docker Desktop."
+  - "The buildx binary URL structure at github.com/docker/buildx/releases/download/v<VERSION>/buildx-v<VERSION>.linux-<arch> is stable across releases (confirmed by years of release history)."
+
+specifications:
+  - "The devcontainer ships docker + docker buildx pinned via ARG at image build time. Bumping either version is a deliberate Dockerfile edit."
+
+deviations_from_plan: >
+  Not in the original 9-slice plan. Third mid-flight insertion in the Slice 5C/D/E devcontainer series. All three were needed because the original 'make devcontainer kamal-capable' goal is a larger problem than the first attempt anticipated. Numbered 6e/9 to continue the letter-suffix pattern.
+
+trade_offs: >
+  Could have mounted the host's buildx binary (~/.docker/cli-plugins/
+  docker-buildx on macOS) instead of downloading a Linux binary.
+  Rejected: the host plugin is a darwin binary and the container is
+  Linux — the architectures differ. Downloading the Linux-native
+  binary is the only option that actually works.
+
+self_review:
+  consistency: "Same install pattern as Slice 5C's docker CLI: ARG-pinned version, arch-aware curl, install into a plugin dir, verify with --version."
+  completeness: "This plus 5C and 5D complete the devcontainer setup for kamal. No known remaining blockers between kamal and the network."
+
+confidence: high
+reviewer_attention:
+  - .devcontainer/Dockerfile:39-46   # The buildx install. Pay attention to the `buildx_arch` mapping — it differs from `docker_arch` (buildx uses amd64/arm64 naming, docker CLI uses x86_64/aarch64).
