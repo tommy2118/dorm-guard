@@ -1,0 +1,128 @@
+intent: >
+  Replace Epic 1's inline-styled ERB with DaisyUI ViewComponents and establish
+  the shared layout shell (nav + flash + Tailwind stylesheet) every later slice
+  depends on. No new user-facing capability — same columns, same data,
+  new view convention.
+
+slice: 3/10
+kind: refactor
+behavior_change: none
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/components/status_badge_component.rb
+    - app/components/status_badge_component.html.erb
+    - spec/components/status_badge_component_spec.rb
+    - spec/components/previews/status_badge_component_preview.rb
+    - app/components/flash_component.rb
+    - app/components/flash_component.html.erb
+    - spec/components/flash_component_spec.rb
+    - spec/components/previews/flash_component_preview.rb
+    - app/components/layouts/nav_component.rb
+    - app/components/layouts/nav_component.html.erb
+    - spec/components/layouts/nav_component_spec.rb
+    - spec/components/previews/layouts/nav_component_preview.rb
+    - app/views/layouts/application.html.erb
+    - app/views/sites/index.html.erb
+    - app/views/sites/_status_badge.html.erb
+    - app/components/placeholder_component.rb
+    - app/components/placeholder_component.html.erb
+    - spec/components/previews/placeholder_component_preview.rb
+  actual:
+    - app/components/flash_component.html.erb
+    - app/components/flash_component.rb
+    - app/components/layouts/nav_component.html.erb
+    - app/components/layouts/nav_component.rb
+    - app/components/placeholder_component.html.erb
+    - app/components/placeholder_component.rb
+    - app/components/status_badge_component.html.erb
+    - app/components/status_badge_component.rb
+    - app/views/layouts/application.html.erb
+    - app/views/sites/_status_badge.html.erb
+    - app/views/sites/index.html.erb
+    - spec/components/flash_component_spec.rb
+    - spec/components/layouts/nav_component_spec.rb
+    - spec/components/previews/flash_component_preview.rb
+    - spec/components/previews/layouts/nav_component_preview.rb
+    - spec/components/previews/placeholder_component_preview.rb
+    - spec/components/previews/status_badge_component_preview.rb
+    - spec/components/status_badge_component_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/components/status_badge_component_spec.rb
+    - spec/components/flash_component_spec.rb
+    - spec/components/layouts/nav_component_spec.rb
+  rationale: >
+    Each new component gets a presentation spec covering its full behavior surface —
+    class resolution by status, empty-state rendering for flash, DaisyUI classes present.
+    Request spec (spec/requests/sites_spec.rb) is untouched; the existing assertions
+    ("body includes 'up'/'down'/'Healthy'/'Broken'/URLs") still pass because the DaisyUI
+    badge renders the status text verbatim inside the span.
+
+verification:
+  tested:
+    - "bin/dc bundle exec rspec — 73/73 green (+13 specs: 5 StatusBadge, 5 Flash, 3 Nav)"
+    - "Component specs assert DaisyUI classes (badge-success / badge-error / badge-ghost / alert-success / alert-error / navbar.bg-base-200)"
+    - "Existing request spec assertions still pass — sites index still includes 'Healthy', 'Broken', URLs, 'up', 'down'"
+  manual:
+    - "Did NOT yet boot a browser to visually verify DaisyUI classes render. Visual verification is deferred to slice 10's end-to-end smoke test (seeds + index pagination). Rendering correctness is already proved by component specs with pre-seeded records."
+
+assumptions:
+  - "The compiled app/assets/builds/tailwind.css from slice 1 is served at request time by Propshaft when the layout references stylesheet_link_tag 'tailwind'. Propshaft serves files in app/assets/builds/ by default; the slice 1 note flagged this as unverified, and this slice still does not verify it in a browser — test env doesn't load assets, so specs can't fail on this. Slice 10 is the first slice that visually matters."
+  - "DaisyUI 5.5.19's class names (badge badge-success, alert alert-error, navbar bg-base-200, table table-zebra, container, btn btn-ghost, link link-hover) are stable within DaisyUI v5 and match the vendored bundle. Verified by grep'ing vendor/assets/stylesheets/daisyui.css for each class family in slice 1."
+
+specifications:
+  - "StatusBadgeComponent maps Site.status enum values ({:up, :down, :unknown}) to DaisyUI badge modifiers. Unknown-by-fallback returns badge-ghost — a site with a corrupted status value still renders, it just looks unknown. This is tighter than Epic 1's partial which had a string-keyed hash."
+  - "FlashComponent only renders alerts for flash keys it explicitly knows ('notice' and 'alert'). Any other flash key is silently dropped. This is intentional — future flash types (info, warning) require a deliberate class mapping, not drift-by-default."
+  - "Layouts::NavComponent lives under the ::Layouts namespace to leave room for future layout components (footer, sidebar, breadcrumb) without cluttering app/components/ root. Constant lookup from layouts/application.html.erb must use absolute ::Layouts because ActionView has its own Layouts module on the lookup path."
+
+deviations_from_plan: >
+  None substantive. One mid-slice design decision was needed: fully-qualifying
+  ::Layouts::NavComponent and ::FlashComponent in the layout because
+  ActionView::Layouts shadows the constant lookup. Caught by rspec failures on
+  the first layout rewrite; fixed immediately. No other drift.
+
+trade_offs: >
+  Vendored DaisyUI's 947KB CSS (slice 1) is not tree-shaken, so adding a dozen
+  utility classes to the views costs nothing at wire time — the stylesheet is
+  already the same size. Trade accepted in slice 1; noted here because this is
+  the first slice that consumes DaisyUI classes at scale.
+
+  FlashComponent uses a known-key allowlist (notice/alert) rather than passing
+  through any flash hash key. Alternative: render all flash keys with a default
+  'alert alert-info' class. Rejected because the plan explicitly scopes this
+  slice to 'no new product capability' — introducing an info/warning category
+  silently would be scope creep. Slice 7+ can add categories if they need them.
+
+interfaces:
+  consumed:
+    - ApplicationComponent  # slice 2 published
+  published:
+    - "StatusBadgeComponent.new(status:)"
+    - "FlashComponent.new(flash:)"
+    - "::Layouts::NavComponent.new"
+
+self_review:
+  consistency: "StatusBadgeComponent and FlashComponent both use a frozen CLASSES_BY_* constant hash, same small mapping pattern. NavComponent doesn't need it (static markup). Consistent within the file, consistent across components."
+  metz: "StatusBadgeComponent is 19 lines with 3 methods, all ≤2 lines. FlashComponent is 16 lines with 3 methods. Layouts::NavComponent is a naked class with no methods (pure view wrapper). All under Metz's limits."
+  tell_dont_ask: "Views ask the component for css_classes / entries / label rather than inspecting @status or @flash. Views never branch on component internals."
+  slice_purity: "Intent sentence has one 'and' (components AND layout shell) — kept deliberately per the plan because they are tightly coupled (the layout renders the nav/flash components). Both halves are migration-only — no product capability added."
+  not_duplicating_tests: "Component specs assert presentation (classes, visible text). Request spec keeps its existing behavioral assertions (status codes, record listing). No duplicate coverage."
+  generator_discipline: "No generators used in this slice. Everything is hand-authored — reviewer doesn't need to distinguish scaffolding from authored code, it is all authored."
+
+confidence: high
+reviewer_attention:
+  - "app/views/layouts/application.html.erb:27-30 — the ::Layouts::NavComponent and ::FlashComponent references must stay fully-qualified. A future refactor that rewrites them as Layouts::NavComponent without the leading colons will silently look up ActionView::Layouts and 500 at request time. Specs caught this once; specs will catch it again, but the comment-free constant is a subtle landmine."
+  - "app/components/status_badge_component.rb:4-8 — the DaisyUI class map. Epic 1 used hex colors directly; this slice delegates styling to DaisyUI. If DaisyUI ever drops badge-ghost as a modifier, the :unknown fallback breaks visually."
+  - "app/components/flash_component.rb:4-7 — the known-key allowlist. Slice 7+ may want to add 'info' or 'warning' — doing so is a deliberate spec change, not an oversight. Keep it explicit."
