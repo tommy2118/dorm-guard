@@ -1,0 +1,70 @@
+intent: >
+  Make the (site_id, checked_at desc) composite index an explicit test
+  invariant so dropping it via a future migration fails the suite with
+  a message that explains the controller-level consequence.
+
+slice: 14/14
+kind: test
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared:
+    - spec/db/schema_spec.rb
+  actual:
+    - spec/db/schema_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/db/schema_spec.rb
+  rationale: >
+    This slice IS the new test. Two examples: the composite index exists
+    on check_results, and its checked_at column is desc-ordered. Both
+    assertions carry a failure message that names SitesController#show
+    and the O(n log n) regression so a future engineer who drops the
+    index sees the controller-level consequence in the test output, not
+    a bare "index not found" error.
+
+addresses:
+  - "#20 peer review — schema spec for composite index"
+
+assumptions:
+  - "ActiveRecord::Base.connection.indexes(:check_results) returns the same structure across SQLite (current) and PostgreSQL (potential future). .columns is an array of string column names; .orders is a hash mapping column name to :asc/:desc. If dorm-guard ever migrates to PostgreSQL, these assertions should still hold — both adapters implement the same IndexDefinition interface."
+
+specifications:
+  - "The (site_id, checked_at) composite index on check_results is a load-bearing contract for SitesController#show. Any migration that drops or reorders it MUST land alongside a corresponding update to this spec — red first, fix second."
+
+deviations_from_plan: addressing peer review feedback
+
+trade_offs: >
+  Schema spec lives at spec/db/schema_spec.rb rather than
+  spec/models/check_result_spec.rb because the contract isn't about
+  CheckResult's behavior — it's about the database's physical layout
+  for controller-level query performance. Putting it in a dedicated
+  schema-invariants file keeps model specs focused on model semantics
+  and creates a natural home for future 'database contract' tests
+  (foreign keys, not-null constraints, check constraints).
+
+  Considered an in-memory EXPLAIN assertion instead — actually run the
+  query and assert the plan uses the index. Rejected because SQLite's
+  EXPLAIN output is unstable across minor versions and the test would
+  be brittle; asserting the index exists is a cheaper invariant that
+  catches the regression the peer reviewer was worried about.
+
+self_review:
+  slice_purity: "One spec file, one invariant, one intent sentence. No new production code."
+  failure_message_quality: "Both assertions include failure messages that explain WHY the index matters, not just WHAT is missing. A future failing test reads like a code review comment."
+  placement: "spec/db/ is a new directory. Convention-neutral but precedented — many Rails codebases use spec/db for schema/migration invariants."
+
+confidence: high
+reviewer_attention:
+  - "spec/db/schema_spec.rb:8-13 — the composite-index existence assertion. If this test ever fails, read the failure message before reaching for a schema change; the message explains the controller-level consequence."
