@@ -23,5 +23,10 @@
         <dd class="mt-1"><%= last_checked_label %></dd>
       </div>
     </dl>
+
+    <div class="card-actions justify-end mt-4">
+      <%= link_to "Edit", edit_site_path(site), class: "btn btn-ghost btn-sm" %>
+      <%= render(DeleteButtonComponent.new(site: site)) %>
+    </div>
   </div>
 </section>

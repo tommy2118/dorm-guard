@@ -2,7 +2,7 @@ require "rails_helper"
 
 RSpec.describe SiteDetailComponent, type: :component do
   let(:site) do
-    Site.new(
+    Site.create!(
       name: "Example",
       url: "https://example.com",
       interval_seconds: 60,

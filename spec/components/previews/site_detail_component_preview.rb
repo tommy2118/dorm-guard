@@ -1,6 +1,7 @@
 class SiteDetailComponentPreview < ViewComponent::Preview
   def up_site
     render(SiteDetailComponent.new(site: Site.new(
+      id: 1,
       name: "Production site",
       url: "https://example.com",
       interval_seconds: 60,
@@ -11,6 +12,7 @@ class SiteDetailComponentPreview < ViewComponent::Preview
 
   def down_site
     render(SiteDetailComponent.new(site: Site.new(
+      id: 2,
       name: "Broken site",
       url: "https://broken.example.com",
       interval_seconds: 30,
@@ -21,6 +23,7 @@ class SiteDetailComponentPreview < ViewComponent::Preview
 
   def unknown_site
     render(SiteDetailComponent.new(site: Site.new(
+      id: 3,
       name: "Just added",
       url: "https://new.example.com",
       interval_seconds: 120,

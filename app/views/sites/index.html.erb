@@ -1,6 +1,9 @@
 <% content_for(:title) { "Sites — Dorm Guard" } %>
 
-<h1 class="text-2xl font-semibold mb-6">Monitored Sites</h1>
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-semibold">Monitored Sites</h1>
+  <%= link_to "New site", new_site_path, class: "btn btn-primary" %>
+</div>
 
 <% if @sites.any? %>
   <div class="overflow-x-auto">
@@ -11,6 +14,7 @@
           <th>URL</th>
           <th>Status</th>
           <th>Last Checked</th>
+          <th class="text-right">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -33,14 +37,24 @@
                 Never
               <% end %>
             </td>
+            <td>
+              <div class="flex gap-2 justify-end">
+                <%= link_to "Show", site_path(site), class: "btn btn-ghost btn-sm" %>
+                <%= link_to "Edit", edit_site_path(site), class: "btn btn-ghost btn-sm" %>
+                <%= render(DeleteButtonComponent.new(site: site)) %>
+              </div>
+            </td>
           </tr>
         <% end %>
       </tbody>
     </table>
   </div>
+
+  <% if @pagy.pages > 1 %>
+    <nav class="mt-6"><%== pagy_nav(@pagy) %></nav>
+  <% end %>
 <% else %>
   <p class="text-base-content/70 py-8">
-    No sites monitored yet. Add some via <code>db/seeds.rb</code> and run
-    <code>bin/dc bin/rails db:seed</code>.
+    No sites monitored yet. Click <strong>New site</strong> to add the first one.
   </p>
 <% end %>

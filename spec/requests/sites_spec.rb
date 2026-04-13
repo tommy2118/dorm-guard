@@ -43,6 +43,25 @@ RSpec.describe "Sites", type: :request do
       expect(response.body).to include("up")
       expect(response.body).to include("down")
     end
+
+    it "renders a 'New site' button linking to the new form" do
+      get sites_path
+      expect(response.body).to include("New site")
+      expect(response.body).to include(new_site_path)
+    end
+
+    it "paginates the index at the configured Pagy limit of 25" do
+      23.times { |i| Site.create!(name: "Extra #{format('%02d', i)}", url: "https://example.com/#{i}", interval_seconds: 60) }
+      # Total: 25 sites (2 let!s + 23 extras). Still within one page.
+
+      get sites_path
+      expect(response.body).not_to include("pagy")
+
+      Site.create!(name: "Overflow A", url: "https://example.com/a", interval_seconds: 60)
+
+      get sites_path
+      expect(response.body).to include("pagy")
+    end
   end
 
   describe "GET /sites/:id" do
