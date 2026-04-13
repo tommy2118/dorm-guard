@@ -105,12 +105,12 @@ self_review:
     incidental.
   security: >
     @site.name is interpolated into the email subject. Mail::Field
-    sanitizes header values, so even an adversarial site name like
-    "Example
-Bcc: attacker@evil.com" cannot inject headers. Checked
-    + mitigated by the framework, but worth flagging because the
-    mitigation is implicit. If we ever build the subject manually or
-    bypass mail()'s header construction, this protection goes away.
+    sanitizes header values, so even an adversarial site name
+    containing CRLF sequences cannot inject arbitrary headers
+    (e.g. a Bcc). Checked + mitigated by the framework, but worth
+    flagging because the mitigation is implicit. If we ever build
+    the subject manually or bypass mail()'s header construction,
+    this protection goes away.
   api: >
     DowntimeAlertMailer.site_down is a new public mailer action, called
     from one place (PerformCheckJob#notify_if_newly_down). If a future
