@@ -1,0 +1,106 @@
+intent: >
+  Wire production.rb to force TLS and allowlist DORM_GUARD_HOST, with
+  /up excluded from both the SSL redirect and host authorization so
+  Kamal's Thruster health probe can reach the app over plain HTTP
+  inside the container before TLS is issued.
+
+slice: 2/9
+kind: feature
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - config/environments/production.rb
+    - spec/config/production_ssl_spec.rb
+  actual:
+    - config/environments/production.rb
+    - spec/config/production_ssl_spec.rb
+    - .env.example
+  drift:
+    - .env.example
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+10 examples"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/config/production_ssl_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop config/environments/production.rb spec/config/production_ssl_spec.rb
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "production.rb declares config.assume_ssl + config.force_ssl uncommented"
+    - "ssl_options.redirect.exclude references shared health_check_exclude predicate"
+    - "config.hosts reads from ENV.fetch('DORM_GUARD_HOST', 'dorm-guard.com')"
+    - "host_authorization references the same shared predicate"
+    - "default_url_options mailer host reads from the same ENV var with protocol: https"
+    - "Old scaffold 'example.com' hardcoded host is gone"
+  manual:
+    - "None yet — behavioral proof (HTTPS 200 on /up) lands in Slice 6's kamal setup"
+
+assumptions:
+  - "Kamal's Thruster proxy terminates TLS at the container edge and forwards to Puma over plain HTTP (default Thruster behavior; verified by Kamal docs, not by a running deploy yet)"
+  - "Kamal's /up health probe path is exactly '/up' — if a future Kamal version changes this, the exclusion predicates will silently fail closed"
+  - "ENV.fetch is evaluated at file-load time (Rails.application.configure runs once on boot), so DORM_GUARD_HOST must be present in the container's env at boot, not at request time"
+  - "config.hosts with a single string element is the right shape for the allowlist — Rails accepts strings, regexes, and IPAddr ranges; a single string matches the exact hostname and nothing else"
+
+specifications:
+  - "There is exactly one source of truth for the public domain per deploy — the DORM_GUARD_HOST env var. Both config.hosts and default_url_options read from it. Adding a second reference to a different ENV var is a regression."
+  - "The /up exclusion predicate is shared between SSL redirect and host authorization as a single lambda (health_check_exclude). Any change to what counts as a 'health check path' must be made in exactly one place."
+  - "Production config does NOT depend on Rails.application.credentials for hostnames — only ENV. This keeps the image schema-compatible across environments without needing master.key at build time for cert-bearing config."
+
+deviations_from_plan: >
+  Extended .env.example with DORM_GUARD_HOST in the same commit rather than deferring — the .env.example header already declared Slice 2A as the owner of that entry, and leaving it out would have been a process violation per the feedback_enforce_constraints_in_config rule.
+
+trade_offs: >
+  Chose a text-level spec (read production.rb as a string and regex
+  on declared config lines) over booting the production environment
+  in a subprocess or using instance_eval with a fake config object.
+  Text-level is honest about its coverage — it catches regressions
+  where someone re-comments a line or removes an ENV read — but it
+  does not prove that the Rails middleware stack actually honors the
+  exclusion at request time. The behavioral proof is deferred to
+  Slice 6 (curl on the live deploy) because a full integration test
+  would require booting production in a subprocess, which is more
+  scaffolding than one slice can justify.
+
+interfaces:
+  published:
+    - "DORM_GUARD_HOST env var — single source of truth for production hostname; consumed by config.hosts, config.host_authorization, config.action_mailer.default_url_options"
+
+self_review:
+  consistency: >
+    Matches the Rails 8 scaffold's suggested shape for assume_ssl,
+    force_ssl, hosts, host_authorization, and ssl_options — the code
+    was all present as commented-out guidance in the scaffold and
+    Slice 2A just uncommented and parameterized it.
+  metz: >
+    production.rb is now 99 lines (was 90) — still well under Metz's
+    100-line rule. No methods extracted (it's a configuration block,
+    not a class).
+  tell_dont_ask: "N/A — configuration block, no collaborators."
+  duplication: >
+    Eliminated a would-be duplication: ssl_options and
+    host_authorization both exclude /up, and both now reference the
+    same health_check_exclude local lambda instead of having two
+    separate -> (r) { r.path == '/up' } literals.
+  error_handling: >
+    ENV.fetch has a default ('dorm-guard.com') for both usages, so
+    the app boots even if DORM_GUARD_HOST is unset. The default is
+    honest — it's the actual production domain — so an unset var
+    in production degrades gracefully rather than crashing the
+    container.
+
+confidence: high
+reviewer_attention:
+  - config/environments/production.rb:31-39   # The health_check_exclude lambda + assume_ssl/force_ssl/ssl_options block. If /up gets redirected, Kamal's first-deploy will loop forever.
+  - config/environments/production.rb:94-98   # config.hosts + host_authorization. The same /up exclusion applies here via the shared lambda.
