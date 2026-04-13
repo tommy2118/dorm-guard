@@ -1,0 +1,118 @@
+intent: >
+  Replace the raw pagy_nav output with a DaisyUI-styled PagyNavComponent that
+  renders a join of btn-sm buttons for prev / numeric pages / current / gap /
+  next, fixing the unstyled pagination discovered during the Epic 2 smoke test.
+
+slice: 11/11
+kind: fix
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/components/pagy_nav_component.rb
+    - app/components/pagy_nav_component.html.erb
+    - spec/components/pagy_nav_component_spec.rb
+    - spec/components/previews/pagy_nav_component_preview.rb
+    - app/views/sites/index.html.erb
+    - app/views/sites/show.html.erb
+    - spec/requests/sites_spec.rb
+  actual:
+    - app/components/pagy_nav_component.html.erb
+    - app/components/pagy_nav_component.rb
+    - app/views/sites/index.html.erb
+    - app/views/sites/show.html.erb
+    - spec/components/pagy_nav_component_spec.rb
+    - spec/components/previews/pagy_nav_component_preview.rb
+    - spec/requests/sites_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/components/pagy_nav_component_spec.rb
+    - spec/requests/sites_spec.rb
+  rationale: >
+    Component spec covers render? gating (single page renders nothing),
+    DaisyUI join structure, prev/next disabled-at-boundary rendering, current
+    page btn-active marker, and :gap rendering in long paginations (constructed
+    via Pagy.new(count: 700, ...) which produces a series with an ellipsis).
+    Request spec assertions on GET /sites and GET /sites/:id tightened to
+    require aria-label="Pagination" AND "join-item" in the body, plus an
+    explicit negative on "&lt;nav" so any future regression that escapes the
+    component output would fail loudly. Both assertions target DaisyUI
+    structure, not Pagy's default markup.
+
+addresses:
+  - "smoke-test gap: pagy_nav rendered escaped on show.html.erb and unstyled everywhere"
+
+assumptions:
+  - "Pagy 9.x's pagy.series returns an array of Integer | String | :gap elements. Integer = navigable page, String = current page (pre-coerced by Pagy), :gap = ellipsis. Verified by reading Pagy 9.4.0 source during drafting and by the :gap spec constructing a 700-count pagy."
+  - "helpers.pagy_url_for(pagy, page) is callable from inside a ViewComponent because Pagy::Frontend is included in ApplicationHelper (slice 5), and ViewComponent's helpers delegates to ActionView. Verified by passing component specs that call render_inline inside with_request_url."
+
+specifications:
+  - "PagyNavComponent is the ONLY place in the app that renders pagination UI. Direct calls to pagy_nav are banned — any future paginated page must render(PagyNavComponent.new(pagy:)) instead. The index and show views are the two current callers and both use the component."
+  - "Single-page collections render no nav at all (render? false). No placeholder, no 'Page 1 of 1' text, no empty div. A future reader who expects a dead nav element will be surprised, but clutter is the worse failure mode."
+  - "Prev/next degrade to disabled spans, not missing elements, so the join layout stays visually consistent at page boundaries. This is a DaisyUI idiom (btn-disabled on a span) rather than the HTML5 <button disabled> idiom, because there is nothing to submit — these are navigation anchors."
+
+deviations_from_plan: >
+  Formal deviation from the Epic 2 plan: the plan has no slice 11. This slice
+  is a review-driven addition after the manual smoke test (Epic 2's
+  verification gate) discovered the unstyled pagination. Added to the plan's
+  numbered Slices list as slice 11 during drafting so scope.drift stays clean.
+  addresses field names the smoke-test gap it closes, and the kind is 'fix'
+  rather than 'feature' because the underlying behavior (pagination) was
+  already shipped in slices 5/6/10; this slice only changes how it looks.
+
+trade_offs: >
+  Chose a new ViewComponent over the two alternatives I considered:
+  (a) a pagy_daisy_nav helper method in ApplicationHelper, and
+  (b) CSS that uses @apply to style Pagy's default .pagy nav output.
+  (a) was rejected because Epic 2's stack decisions explicitly moved view
+  logic OUT of helpers and INTO components. (b) was rejected because
+  introducing a CSS layer beyond DaisyUI utility classes in templates
+  reopens a styling-strategy decision that slice 3 settled on
+  'DaisyUI classes in component templates, no custom CSS'. A component is
+  the consistent choice for this codebase even though it formally breaks
+  'slice 10 has no new components' — the plan was wrong about slice 10
+  being the last slice, not wrong about the component being the right shape.
+
+  Rejected wrapping the pagy_nav output with html_safe and calling it done —
+  that fixes the escape but leaves the default Pagy .pagy-nav CSS class
+  dangling without a stylesheet. The DaisyUI join is the actual design.
+
+  render? gate lives in the component rather than every caller — one rule,
+  one place. If a future page wants to force-render an empty nav (unlikely),
+  it can pass a different prop, but YAGNI.
+
+interfaces:
+  consumed:
+    - "ApplicationHelper#pagy_url_for(pagy, page)"  # from Pagy::Frontend, slice 5
+    - "Site#check_results"  # indirectly via the show view
+  published:
+    - "PagyNavComponent.new(pagy:)"
+
+self_review:
+  slice_purity: >
+    Intent is one concept — 'pagination UI is a DaisyUI-styled component' —
+    even though it touches seven files, because the other six files are all
+    'wire the component into existing call sites and update the assertions
+    to match the new DOM'. No product behavior change.
+  metz: "PagyNavComponent is 15 lines, 3 methods (initialize, render?, url_for_page), all ≤2 lines."
+  tell_dont_ask: "View asks the component 'should I render?' via the render? hook and 'what URL for page N?' via url_for_page(page). The view never inspects pagy.pages or pagy.prev."
+  testing_boundary: "Component specs assert markup (.join, .join-item, .btn-active, .btn-disabled, aria-current). Request specs assert Response body includes the aria-label and the join-item class — enough to prove the component rendered, not enough to overlap with component-level structural assertions."
+  stack_consistency: "Uses DaisyUI join + btn-sm — the same atomic classes that appear in DeleteButtonComponent (btn btn-error btn-sm) and SiteFormComponent (input input-bordered, btn btn-primary). No new utility classes introduced."
+  smoke_test_closed_loop: "The smoke test that discovered the bug is Epic 2's verification gate. The slice that closes the gap is the slice that proves the gate works as intended — reviewers catching real bugs before merge."
+
+confidence: high
+reviewer_attention:
+  - "app/components/pagy_nav_component.rb:13-15 — helpers.pagy_url_for delegates through ViewComponent's helpers proxy. If a future ViewComponent upgrade changes helpers resolution semantics, this component's URL generation breaks silently; the request spec's assertion that join-item appears in the body catches the silent failure."
+  - "app/components/pagy_nav_component.html.erb:12 — the when String branch renders the current page as a span with btn-active. Pagy 9.x uses a stringified page number as the in-array marker for the current page (e.g., series = [1, 2, '3', 4, 5]). If Pagy ever changes this to :current or a tuple, the case/when needs to update — the component spec pins the current-page rendering so a regression fails fast."
+  - "spec/requests/sites_spec.rb:75-79,121-125 — the two request-spec tightenings. They require 'aria-label=\"Pagination\"' AND 'join-item' AND no '&lt;nav' escape. Keep all three conditions; any one alone would miss a class of regression."
