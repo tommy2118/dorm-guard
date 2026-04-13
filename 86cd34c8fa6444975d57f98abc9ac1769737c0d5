@@ -1,0 +1,73 @@
+intent: >
+  Write the pr-0021 decision record and first-deploy runbook —
+  including the full rollback section — before Slice 6 runs, so the
+  runbook lands in git as the plan, not as a retroactive recap.
+
+slice: 6/9
+kind: chore
+behavior_change: none
+reversibility: trivial
+
+scope:
+  declared:
+    - docs/decisions/pr-0021-kamal-deploy.md
+  actual:
+    - docs/decisions/pr-0021-kamal-deploy.md
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: "Doc-only slice. No code changes."
+
+verification:
+  tested:
+    - "Full rspec suite 162/162"
+  manual:
+    - "Read the ADR end-to-end; rollback section covers failed boot, failed health, failed cert, failed smoke, and explicit 'what rollback does NOT cover' exclusions"
+
+assumptions:
+  - "Kamal 2.11.0's `rollback` command moves to the previous image digest without requiring a prior snapshot beyond the default Kamal history (standard Kamal behavior)"
+  - "Let's Encrypt's HTTP-01 challenge is what Thruster uses on first setup — operator's droplet must accept inbound port 80 for the challenge to succeed"
+  - "Route 53 propagation at TTL 60 reaches resolvers worldwide within a few minutes, fast enough that Slice 6 doesn't need to pause for hours"
+
+specifications:
+  - "The host triplet (`config.hosts`, `proxy.host`, Route 53 A record name) must agree. Any slice that touches one must touch all three or document why not."
+  - "The WEB_CONCURRENCY pin in deploy.yml and the boot guard in puma.rb are an atomic pair. They change together or not at all."
+  - "Every required deploy var in `config/deploy.yml` has a matching line in `.env.example`. Breaking this symmetry is a process violation, not a typo."
+  - "Rollback is part of every future deploy-touching ADR, not optional. Ships-before-runbook is the order."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Chose to write Slice 5 BEFORE provisioning rather than after,
+  even though the operator explicitly asked me to start driving
+  the CLI tools. Reason: if the runbook is written after the fact,
+  it becomes a recap of what I happened to type, not a plan a
+  future operator can follow. Cost: a small delay before Slice 6
+  starts executing. Benefit: the runbook is honest about intent
+  rather than lucky-path documentation.
+
+self_review:
+  consistency: >
+    Matches the project's existing docs/decisions/ convention
+    (pr-0020-site-crud.md). Slice 5 is a doc-only ADR, not a PR
+    walkthrough yet — the walkthrough skill produces its own
+    artifact in Slice 9.
+  completeness: >
+    Rollback section is the part the user critiqued as missing from
+    the earlier plan version. It covers boot / health / cert /
+    smoke and the 'what rollback does not cover' clauses.
+  length: >
+    Long for an ADR (~200 lines), but this is the 'read me under
+    stress' document — terse enough to read in a hurry, specific
+    enough to execute without guessing. The 60-second rollback
+    reading is intentional.
+
+confidence: high
+reviewer_attention:
+  - docs/decisions/pr-0021-kamal-deploy.md   # Full read before Slice 6 executes. If any step in the runbook is wrong, the time to fix it is now, not at 3am during an incident.
