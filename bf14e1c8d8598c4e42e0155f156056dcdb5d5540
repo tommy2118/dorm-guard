@@ -1,0 +1,120 @@
+intent: >
+  Wire the Epic 2 CRUD actions into the index and detail views — New site
+  button, per-row Show/Edit/Delete actions, pagination, expanded seeds —
+  so the feature is reachable end-to-end from /sites. Wiring only, no new
+  components, no new features.
+
+slice: 10/10
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/controllers/sites_controller.rb
+    - app/views/sites/index.html.erb
+    - app/components/site_detail_component.html.erb
+    - app/components/layouts/nav_component.html.erb
+    - db/seeds.rb
+    - spec/requests/sites_spec.rb
+    - spec/components/site_detail_component_spec.rb
+    - spec/components/previews/site_detail_component_preview.rb
+  actual:
+    - app/components/layouts/nav_component.html.erb
+    - app/components/site_detail_component.html.erb
+    - app/controllers/sites_controller.rb
+    - app/views/sites/index.html.erb
+    - db/seeds.rb
+    - spec/components/previews/site_detail_component_preview.rb
+    - spec/components/site_detail_component_spec.rb
+    - spec/requests/sites_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/requests/sites_spec.rb
+  rationale: >
+    Two new assertions on the existing GET /sites describe block — the 'New
+    site' button is rendered with the correct link, and pagy_nav only
+    appears when the site count exceeds the Pagy limit of 25. The
+    pagination spec creates 23 extra sites (total 25, still one page) then
+    adds one more to cross the boundary. No new component spec — this
+    slice adds no new components. The SiteDetailComponent spec and preview
+    updates are fallout from wiring action buttons into the component
+    template (slice 10 is the first slice that renders edit_site_path(site)
+    inside the component, and nil-id Site.new stopped working).
+
+assumptions:
+  - "Pagy's pagy_nav output contains the literal string 'pagy' somewhere in its markup (class names, data attributes). Verified by grepping pagy 9.4.0's helpers.rb; may need adjustment on a future Pagy version bump."
+  - "button_to inside the DeleteButtonComponent, rendered inside a table row, is valid HTML (form-inside-tr). It is — forms can wrap any flow content. Might feel wrong but the component spec and the request spec both pass."
+
+specifications:
+  - "The sites index shows pagy_nav ONLY when @pagy.pages > 1. A single-page result has no nav UI — no placeholder, no skeleton, no 'Page 1 of 1' text."
+  - "The 'New site' primary button appears in two places: page header (always visible when @sites.any?) and the top nav (always visible regardless of result count). The nav version makes creation reachable even from an empty state."
+  - "Seeds create 32 total sites at db:seed time: 2 Epic 1 smoke-test fixtures + 30 Fixture NN entries. find_or_create_by! makes db:seed idempotent across multiple runs. The pagination assertion in the request spec creates its own data independent of seeds — seeds are for the manual smoke test, not for automated tests."
+
+deviations_from_plan: >
+  Two files touched beyond the plan's original declared list:
+  spec/components/site_detail_component_spec.rb and
+  spec/components/previews/site_detail_component_preview.rb. Both had to
+  switch from Site.new to a persisted/id-assigned Site because the detail
+  component template now renders edit_site_path(site) and
+  DeleteButtonComponent, which require site.id to generate URLs. Not scope
+  creep — direct fallout from wiring action buttons into the component,
+  and the plan's Slice 10 declared list has been updated to match reality.
+  Drift cleared; scope.drift is empty.
+
+trade_offs: >
+  Pagination UI is rendered via <%== pagy_nav(@pagy) %> (html_safe output)
+  wrapped in a <nav> element. Alternative: build a custom DaisyUI-styled
+  navigation component and skip Pagy's default helper. Rejected as scope
+  creep — slice 10 is wiring only. The default pagy_nav markup is
+  unstyled but functional; a future slice or epic can introduce a
+  PagyNavComponent if the aesthetic becomes a priority.
+
+  SiteDetailComponent spec was updated to create! the site rather than
+  mocking a stub with a fake id. Considered: introduce a
+  double('Site', id: 1, name: 'X', ...) to avoid DB writes in a
+  component spec. Rejected because (a) dorm-guard's CLAUDE.md forbids
+  mocking what you don't own, and Site is ours, so it's actually
+  mockable — but (b) the component reads url, status, interval_seconds,
+  last_checked_at, AND the DeleteButtonComponent reads id and name
+  separately, so a mock would need 6 stubbed methods and still not
+  exercise the URL helper resolution. create! is cheaper.
+
+  DeleteButtonComponent inside the index table row uses button_to which
+  generates a nested <form> inside <tr>. This is valid HTML5 (flow content)
+  but historically gave some browsers trouble with row selection. On
+  modern browsers and with DaisyUI's simple table layout there are no
+  visible issues; if a future UX epic introduces row-click-to-show, the
+  button_to may need to move to an inline JS trigger instead.
+
+interfaces:
+  consumed:
+    - "StatusBadgeComponent.new(status:)"  # slice 3
+    - "SitesController#new, #edit, #show, #destroy"  # slices 6-9
+    - "DeleteButtonComponent.new(site:)"  # slice 9
+    - "ApplicationController#pagy(collection)"  # slice 5
+    - "ApplicationHelper#pagy_nav(pagy)"  # slice 5
+
+self_review:
+  no_new_components: "Declared intent: wiring only. Count of new components in this slice: zero. Verified by git show --stat HEAD — only modified files under app/components/, no new files."
+  no_new_features: "New affordances on existing pages do not count as new features in this slice's terms — the routes, controllers, and components they point at all landed in slices 6-9. This slice only makes them reachable. No new routes, no new controller actions."
+  no_opportunistic_polish: "Things I could have done but did not: restyle the table header, add a loading spinner, animate the flash alerts, introduce a dark mode toggle, add keyboard shortcuts. All out of scope for a wiring slice."
+  seeds_are_test_data_not_fixtures: "db/seeds.rb Fixture sites are for the manual smoke test gate in Epic 2's Verification section. The request spec's pagination assertion creates its own sites — it does not rely on seeds running in test env. Seeds and test data are separate concerns."
+  controller_guardrails: "Index action gained pagination; no new action, no new filter. site_params unchanged. before_action :set_site unchanged (index doesn't need a specific site). resources :sites line unchanged — slice 9 already completed it. Guardrail preservation verified."
+  epic_2_done_condition: "All 10 slices landed. Automated specs green (120/120). /lookbook renders every Epic 2 component. Manual smoke test is the final gate before the PR ritual — that is the user's call, not mine."
+
+confidence: high
+reviewer_attention:
+  - "app/views/sites/index.html.erb:55 — `<%== pagy_nav(@pagy) %>` uses `<%==` (double equals) for html_safe output. Pagy's helper returns a string that must not be escaped. Easy to regress to `<%=` which would print the raw HTML as text."
+  - "db/seeds.rb:14-21 — the 30 fixture sites. If a future ops epic adds email alerts on site creation, re-running db:seed would fire 30 emails unless the find_or_create_by! idempotency holds. Verified idempotent today; keep it that way."
+  - "spec/requests/sites_spec.rb:60-74 — the pagination regression test is the ONLY automated test that proves pagination actually activates. Don't delete it when refactoring."
