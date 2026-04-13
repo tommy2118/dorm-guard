@@ -7,15 +7,16 @@ image: dorm_guard
 
 # Deploy to these servers.
 #
-# TODO: before running `kamal setup` the operator must replace the
-# REPLACE-DROPLET-IP placeholder with a real IPv4 or SSH-reachable
-# hostname. Grep for `REPLACE-` in this file before every deploy.
+# Public IPv4 of the `dorm-guard` droplet in nyc3 (s-1vcpu-1gb,
+# ubuntu-24-04-x64). Substituted from the REPLACE-DROPLET-IP
+# placeholder in Slice 6. If the droplet is destroyed and recreated
+# this IP will change — rotate here and in Route 53 together.
 servers:
   web:
-    - REPLACE-DROPLET-IP
+    - 104.236.125.236
   # job:
   #   hosts:
-  #     - REPLACE-DROPLET-IP
+  #     - 104.236.125.236
   #   cmd: bin/jobs
 
 # Kamal's Thruster proxy terminates TLS via Let's Encrypt for the
@@ -30,13 +31,15 @@ proxy:
 
 # Where you keep your container images.
 #
-# TODO: before running `kamal setup` the operator must replace
-# REPLACE-DOCR-NAMESPACE with the actual DigitalOcean Container
-# Registry namespace (see `doctl registry get`). The `username` for
-# DOCR is the DigitalOcean API access token itself (DOCR uses the
-# token as both username and password).
+# Reusing the existing `nightloom` DOCR namespace — DigitalOcean
+# enforces one registry per account, so a dorm-guard-scoped namespace
+# is not available. Image path is registry.digitalocean.com/nightloom/
+# dorm_guard. Namespace chosen in Slice 5 ADR (docs/decisions/
+# pr-0021-kamal-deploy.md). DOCR uses the DigitalOcean API access
+# token as both username and password — both fields reference the
+# same KAMAL_REGISTRY_PASSWORD secret.
 registry:
-  server: registry.digitalocean.com/REPLACE-DOCR-NAMESPACE
+  server: registry.digitalocean.com/nightloom
   username:
     - KAMAL_REGISTRY_PASSWORD
   password:
@@ -48,20 +51,23 @@ env:
   secret:
     - RAILS_MASTER_KEY
     - KAMAL_REGISTRY_PASSWORD
-    - MAILGUN_SMTP_USER_NAME
-    - MAILGUN_SMTP_PASSWORD
+    - SMTP_USER_NAME
+    - SMTP_PASSWORD
     - DORM_GUARD_ALERT_TO
   clear:
     # Public hostname — single source of truth, consumed by config.hosts,
     # config.host_authorization, and config.action_mailer.default_url_options.
     DORM_GUARD_HOST: dorm-guard.com
 
-    # Outbound mailer sender. Must match a verified Mailgun domain.
+    # Outbound mailer sender. Must be a verified SES identity (or on a
+    # verified SES domain once the sandbox is lifted).
     DORM_GUARD_MAIL_FROM: dorm-guard@dorm-guard.com
 
-    # Mailgun SMTP endpoint. Override to smtp.eu.mailgun.org for EU accounts.
-    MAILGUN_SMTP_ADDRESS: smtp.mailgun.org
-    MAILGUN_SMTP_PORT: "587"
+    # SMTP endpoint. Provider-neutral naming — currently pointed at
+    # Amazon SES us-east-1. Swap providers via .env / kamal env push,
+    # not via config changes, so the image stays portable.
+    SMTP_ADDRESS: email-smtp.us-east-1.amazonaws.com
+    SMTP_PORT: "587"
 
     # Run the Solid Queue Supervisor inside the web server's Puma process
     # to do jobs. When you start using multiple servers, split job

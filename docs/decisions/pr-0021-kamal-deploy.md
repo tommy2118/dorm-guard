@@ -26,9 +26,11 @@ It's written *before* Slice 6 (the first `kamal setup`) runs, so what lands in g
 - **State:** Four SQLite databases (`production`, `production_cache`, `production_queue`, `production_cable`), all under `/rails/storage`, backed by the Kamal-managed `dorm_guard_storage` named volume. Volume persists across deploys.
 
 ### Mail
-- **Provider:** Mailgun SMTP at `smtp.mailgun.org:587`, STARTTLS, AUTH PLAIN. Operator precondition: the sending domain must be verified in Mailgun (*not* in sandbox mode) before Slice 7's smoke runs — sandboxed domains only deliver to pre-authorized recipients, and the smoke test will not catch this without checking the Mailgun dashboard directly.
-- **Credentials:** `MAILGUN_SMTP_USER_NAME` + `MAILGUN_SMTP_PASSWORD` have **no defaults** in `config/environments/production.rb`. Missing either causes a `KeyError` at boot and Kamal rolls the deploy back. This is deliberate — silent delivery failure is the one thing a downtime monitor cannot afford.
-- **Accepted trade-off:** `raise_delivery_errors = false`. Cost: a post-boot Mailgun outage or credential rot will silently drop alerts; the operator learns via inbox absence + Mailgun dashboard, not via exception. Reason: letting mailer exceptions bubble from `PerformCheckJob` would poison Solid Queue's failed-job table on every transient SMTP hiccup. Revisit in Epic 6.
+- **Provider:** Amazon SES SMTP at `email-smtp.us-east-1.amazonaws.com:587`, STARTTLS, AUTH LOGIN. Chosen in Slice 5B after Mailgun's free tier turned out to be unavailable on the operator's account; SES is effectively free at this volume (pennies per month for a single-recipient downtime monitor) and we were already using AWS credentials for Route 53.
+- **Operator precondition:** the sending identity must be verified in SES (`aws ses verify-email-identity`). SES's sandbox mode is actually ideal for this use case — it restricts delivery to *verified* recipients only, which matches "single-operator MVP alerting one person" exactly. Proper domain verification (for the sending side) can follow in a later slice; for now, verify the same email address as both `DORM_GUARD_MAIL_FROM` and `DORM_GUARD_ALERT_TO` and SES will send-to-self.
+- **Credentials:** `SMTP_USER_NAME` and `SMTP_PASSWORD` have **no defaults** in `config/environments/production.rb`. Missing either causes a `KeyError` at boot and Kamal rolls the deploy back. This is deliberate — silent delivery failure is the one thing a downtime monitor cannot afford. For SES specifically, `SMTP_USER_NAME` is the IAM access key ID of a user scoped to `ses:SendEmail`/`ses:SendRawEmail`, and `SMTP_PASSWORD` is the [SES SMTP password derived](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html) from that IAM user's secret access key — **not** the IAM secret itself. Slice 6 documents the derivation steps in the Slice 6 commit body.
+- **Env var naming:** `SMTP_*` is deliberately provider-neutral. Swapping providers (SES → Resend, SES → Postmark, etc.) is a `.env` change, not another rename slice. Slice 5B renamed from `MAILGUN_SMTP_*` → `SMTP_*` for exactly this reason.
+- **Accepted trade-off:** `raise_delivery_errors = false`. Cost: a post-boot SMTP outage or credential rot will silently drop alerts; the operator learns via inbox absence + the SES / CloudWatch dashboards, not via exception. Reason: letting mailer exceptions bubble from `PerformCheckJob` would poison Solid Queue's failed-job table on every transient SMTP hiccup. Revisit in Epic 6.
 
 ### Secrets
 - `.env` on the operator's laptop (gitignored), sourced by `.kamal/secrets`. CI's deploy workflow (Slice 8) writes a matching `.env` from GitHub repo secrets so laptop and runner are schema-symmetric.
@@ -46,9 +48,9 @@ It's written *before* Slice 6 (the first `kamal setup`) runs, so what lands in g
 1. **Droplet provisioned** via `doctl compute droplet create` in `nyc3`, `s-1vcpu-1gb`, `ubuntu-24-04-x64`, with all personal SSH keys installed (`pulse-deploy`, `ironman`, `thor`, `captain-america`). Public IPv4 captured.
 2. **DNS propagated:** Route 53 `A` record at `dorm-guard.com` → droplet IPv4, TTL 60. Verify with `dig +short dorm-guard.com` from the operator's laptop before proceeding.
 3. **`config/deploy.yml` placeholders substituted:** grep for `REPLACE-` in the file and replace both tokens with real values. There are exactly two: `REPLACE-DROPLET-IP` and `REPLACE-DOCR-NAMESPACE`. Miss either and `kamal setup` fails at push or SSH.
-4. **`.env` populated:** copy `.env.example` to `.env` and fill in `RAILS_MASTER_KEY`, `KAMAL_REGISTRY_PASSWORD` (DigitalOcean API access token), `MAILGUN_SMTP_USER_NAME`, `MAILGUN_SMTP_PASSWORD`, `DORM_GUARD_ALERT_TO`, `DORM_GUARD_MAIL_FROM`. Leave the vars with defaults empty unless overriding.
+4. **`.env` populated:** copy `.env.example` to `.env` and fill in `RAILS_MASTER_KEY`, `KAMAL_REGISTRY_PASSWORD` (DigitalOcean API access token), `SMTP_USER_NAME` (SES IAM access key ID), `SMTP_PASSWORD` (SES-derived SMTP password, not the IAM secret), `DORM_GUARD_ALERT_TO`, `DORM_GUARD_MAIL_FROM`. Leave the vars with defaults empty unless overriding.
 5. **DOCR login:** `doctl registry login` on the operator's laptop so Docker can push to `registry.digitalocean.com/nightloom`.
-6. **Mailgun domain verified** in the Mailgun dashboard (not in sandbox mode). `DORM_GUARD_MAIL_FROM` must be an address on that verified domain.
+6. **SES identity verified:** `aws ses verify-email-identity --email-address <addr> --region us-east-1` and click the verification link. Same address should be both `DORM_GUARD_MAIL_FROM` and `DORM_GUARD_ALERT_TO` while SES is in sandbox mode.
 
 ## First deploy runbook (Slice 6)
 
@@ -105,7 +107,7 @@ bin/dc kamal app logs | tail -100    # Find the error
 bin/dc kamal rollback                # Back to previous image
 ```
 
-Same as above — if no previous image exists, forward-fix. Common first-deploy causes: `config.force_ssl` loop (Slice 2A's `/up` redirect-exclude missing), `config.hosts` rejecting the Kamal probe's Host header (Slice 2A's host-auth exclude missing), missing Mailgun credential causing `KeyError` at boot (Slice 2B's fail-fast firing correctly — fix `.env`).
+Same as above — if no previous image exists, forward-fix. Common first-deploy causes: `config.force_ssl` loop (Slice 2A's `/up` redirect-exclude missing), `config.hosts` rejecting the Kamal probe's Host header (Slice 2A's host-auth exclude missing), missing SMTP credential causing `KeyError` at boot (Slice 2B/5B's fail-fast firing correctly — fix `.env`).
 
 ### Failed TLS cert issuance on first `kamal setup`
 Symptom: `kamal setup` completes the image push + container boot, but the proxy shows no cert and `https://dorm-guard.com/up` fails with a TLS error.
@@ -121,9 +123,9 @@ Rollback does **not** help here — a cert problem is forward-fix only. `bin/dc 
 Symptom: `/up` returns 200 over TLS, but Slice 7's seeded check + mail flow doesn't complete end-to-end.
 
 1. `bin/dc kamal app logs | grep -E "(PerformCheckJob|DowntimeAlertMailer|SMTP)"` — did the job run? did the mailer run?
-2. Mailgun dashboard → Logs → check for `accepted`, `delivered`, or failure events tied to `DORM_GUARD_ALERT_TO`.
-3. If Mailgun shows no attempts, the app isn't reaching SMTP — check `smtp_settings` is being read (the fail-fast would have caught unset credentials at boot, so this would be a network / DNS issue reaching `smtp.mailgun.org`).
-4. If Mailgun shows `rejected`, the domain is still in sandbox mode — add the operator's email as an authorized recipient in Mailgun or wait for domain verification.
+2. **SES console → Account dashboard → Sending statistics** (plus CloudWatch `AWS/SES` namespace for per-minute send/bounce counts). Check for `Delivery`, `Bounce`, or `Complaint` events tied to `DORM_GUARD_ALERT_TO`.
+3. If SES shows no attempts, the app isn't reaching SMTP — check `smtp_settings` is being read (the fail-fast would have caught unset credentials at boot, so this would be a network / DNS issue reaching `email-smtp.us-east-1.amazonaws.com`, or SES throttling).
+4. If SES shows `MessageRejected: Email address is not verified`, the recipient isn't verified and SES is still in sandbox mode — verify it with `aws ses verify-email-identity` or request production access from the SES console.
 
 Rollback the image only if the broken state is tied to a code regression in the current slice. If it's a credential or domain issue, forward-fix in `.env` + redeploy (`bin/dc kamal env push && bin/dc kamal deploy`).
 
@@ -140,10 +142,10 @@ These are the GitHub repo secrets the Slice 8 deploy workflow will read. Listed 
 - `KAMAL_SSH_KEY` — private key whose public key is installed on the droplet (one of the SSH keys from Slice 6)
 - `KAMAL_REGISTRY_PASSWORD` — same DO API token as above; Kamal uses it as both username and password for DOCR
 - `RAILS_MASTER_KEY` — contents of `config/master.key`
-- `MAILGUN_SMTP_USER_NAME` — Mailgun SMTP login
-- `MAILGUN_SMTP_PASSWORD` — Mailgun SMTP password
-- `DORM_GUARD_ALERT_TO` — recipient for downtime alerts
-- `DORM_GUARD_MAIL_FROM` — sender address on the verified Mailgun domain
+- `SMTP_USER_NAME` — SES IAM access key ID (or equivalent for other providers)
+- `SMTP_PASSWORD` — SES SMTP password derived from the IAM secret (not the raw IAM secret; see SES docs for the derivation)
+- `DORM_GUARD_ALERT_TO` — recipient for downtime alerts (must be a verified SES identity while the sandbox is in effect)
+- `DORM_GUARD_MAIL_FROM` — sender address on a verified SES identity (same address as ALERT_TO is fine during sandbox)
 
 ## Constraints that must not drift
 

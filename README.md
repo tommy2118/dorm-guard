@@ -47,19 +47,21 @@ Tracked in [GitHub Issues](https://github.com/tommy2118/dorm-guard/issues) with 
 
 Production is deployed with Kamal to `dorm-guard.com`. The operator keeps a local `.env` file (gitignored — see `.gitignore` and the committed `.env.example` template) and `.kamal/secrets` sources it at deploy time. CI's deploy workflow writes the same schema from GitHub repo secrets so laptop and runner stay symmetric.
 
-| Variable                  | Required | Default                    | Consumed by                                                                   |
-| ------------------------- | -------- | -------------------------- | ----------------------------------------------------------------------------- |
-| `RAILS_MASTER_KEY`        | yes      | (from `config/master.key`) | Rails credentials / message verifier                                          |
-| `DORM_GUARD_HOST`         | no       | `dorm-guard.com`           | `config.hosts`, mailer URL options, Kamal proxy host                          |
-| `DORM_GUARD_MAIL_FROM`    | no       | `dorm-guard@dorm-guard.com` | `ApplicationMailer.default[:from]`                                            |
-| `DORM_GUARD_ALERT_TO`     | no       | `alerts@dorm-guard.local`  | `DowntimeAlertMailer` recipient                                               |
-| `MAILGUN_SMTP_ADDRESS`    | no       | `smtp.mailgun.org`         | `action_mailer.smtp_settings[:address]` (override for EU region)              |
-| `MAILGUN_SMTP_PORT`       | no       | `587`                      | `action_mailer.smtp_settings[:port]`                                          |
-| `MAILGUN_SMTP_USER_NAME`  | **yes**  | — (fail-fast)              | `action_mailer.smtp_settings[:user_name]` — container refuses boot if missing |
-| `MAILGUN_SMTP_PASSWORD`   | **yes**  | — (fail-fast)              | `action_mailer.smtp_settings[:password]` — container refuses boot if missing  |
-| `KAMAL_REGISTRY_PASSWORD` | yes      | —                          | Kamal → DigitalOcean Container Registry push                                  |
-| `SOLID_QUEUE_IN_PUMA`     | yes      | `true` (set in `deploy.yml`) | Runs Solid Queue workers inside the Puma process                            |
-| `WEB_CONCURRENCY`         | yes      | `1` (pinned in `deploy.yml`) | Pinned to prevent Solid Queue recurring-scheduler double-fire              |
+| Variable                  | Required | Default                                  | Consumed by                                                                   |
+| ------------------------- | -------- | ---------------------------------------- | ----------------------------------------------------------------------------- |
+| `RAILS_MASTER_KEY`        | yes      | (from `config/master.key`)               | Rails credentials / message verifier                                          |
+| `DORM_GUARD_HOST`         | no       | `dorm-guard.com`                         | `config.hosts`, mailer URL options, Kamal proxy host                          |
+| `DORM_GUARD_MAIL_FROM`    | no       | `dorm-guard@dorm-guard.com`              | `ApplicationMailer.default[:from]`                                            |
+| `DORM_GUARD_ALERT_TO`     | no       | `alerts@dorm-guard.local`                | `DowntimeAlertMailer` recipient                                               |
+| `SMTP_ADDRESS`            | no       | `email-smtp.us-east-1.amazonaws.com`     | `action_mailer.smtp_settings[:address]` (Amazon SES us-east-1 by default)     |
+| `SMTP_PORT`               | no       | `587`                                    | `action_mailer.smtp_settings[:port]`                                          |
+| `SMTP_USER_NAME`          | **yes**  | — (fail-fast)                            | `action_mailer.smtp_settings[:user_name]` — container refuses boot if missing |
+| `SMTP_PASSWORD`           | **yes**  | — (fail-fast)                            | `action_mailer.smtp_settings[:password]` — container refuses boot if missing  |
+| `KAMAL_REGISTRY_PASSWORD` | yes      | —                                        | Kamal → DigitalOcean Container Registry push                                  |
+| `SOLID_QUEUE_IN_PUMA`     | yes      | `true` (set in `deploy.yml`)             | Runs Solid Queue workers inside the Puma process                              |
+| `WEB_CONCURRENCY`         | yes      | `1` (pinned in `deploy.yml`)             | Pinned to prevent Solid Queue recurring-scheduler double-fire                 |
+
+The SMTP vars are provider-neutral on purpose — swapping from SES to Resend / Mailgun / Postmark is a `.env` change, not a code change. For Amazon SES specifically: `SMTP_USER_NAME` is the IAM access key ID of a user with `ses:SendEmail`/`ses:SendRawEmail`; `SMTP_PASSWORD` is the [SES SMTP password derived](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html) from that IAM user's secret — **not** the IAM secret itself.
 
 `.env.example` in the repo root is the authoritative schema — adding a new required deploy var to `config/deploy.yml` or `.kamal/secrets` without a matching line there is a process violation.
 

@@ -58,22 +58,27 @@ Rails.application.configure do
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = { database: { writing: :queue } }
 
-  # Deliver mail through Mailgun SMTP. Accepted trade-off: delivery
-  # errors are swallowed so a transient SMTP hiccup doesn't pollute
-  # Solid Queue's failed-job table on every downtime alert. Cost: a
-  # Mailgun outage or credential rot will silently drop alerts —
-  # smoke testing and the Mailgun dashboard are the external
+  # Deliver mail through SMTP. Provider is chosen at deploy time via
+  # SMTP_ADDRESS; currently pointed at Amazon SES
+  # (email-smtp.us-east-1.amazonaws.com, AUTH LOGIN, STARTTLS on 587).
+  # Credentials come from ENV via .env / Kamal's secrets plumbing so
+  # the image builds without master.key and CI stays symmetric with
+  # laptop. Accepted trade-off: delivery errors are swallowed so a
+  # transient SMTP hiccup doesn't pollute Solid Queue's failed-job
+  # table on every downtime alert. Cost: outage or credential rot
+  # silently drops alerts — smoke testing and the provider's
+  # dashboard (CloudWatch / SES console for SES) are the external
   # backstops. Revisit in Epic 6 when mail is one of several alert
   # channels and per-channel error visibility matters more.
   config.action_mailer.delivery_method = :smtp
   config.action_mailer.perform_deliveries = true
   config.action_mailer.raise_delivery_errors = false
   config.action_mailer.smtp_settings = {
-    address:              ENV.fetch("MAILGUN_SMTP_ADDRESS", "smtp.mailgun.org"),
-    port:                 ENV.fetch("MAILGUN_SMTP_PORT", "587").to_i,
-    user_name:            ENV.fetch("MAILGUN_SMTP_USER_NAME"),
-    password:             ENV.fetch("MAILGUN_SMTP_PASSWORD"),
-    authentication:       :plain,
+    address:              ENV.fetch("SMTP_ADDRESS", "email-smtp.us-east-1.amazonaws.com"),
+    port:                 ENV.fetch("SMTP_PORT", "587").to_i,
+    user_name:            ENV.fetch("SMTP_USER_NAME"),
+    password:             ENV.fetch("SMTP_PASSWORD"),
+    authentication:       :login,
     enable_starttls_auto: true
   }
 
