@@ -1,0 +1,106 @@
+intent: >
+  Let users delete sites via a DaisyUI error button with Turbo confirm;
+  dependent: :destroy (slice 4) cascades check history automatically.
+  DeleteButtonComponent is ready for slice 10 to wire into views.
+
+slice: 9/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - config/routes.rb
+    - app/controllers/sites_controller.rb
+    - app/components/delete_button_component.rb
+    - app/components/delete_button_component.html.erb
+    - spec/components/delete_button_component_spec.rb
+    - spec/components/previews/delete_button_component_preview.rb
+    - spec/requests/sites_spec.rb
+  actual:
+    - app/components/delete_button_component.html.erb
+    - app/components/delete_button_component.rb
+    - app/controllers/sites_controller.rb
+    - config/routes.rb
+    - spec/components/delete_button_component_spec.rb
+    - spec/components/previews/delete_button_component_preview.rb
+    - spec/requests/sites_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/components/delete_button_component_spec.rb
+    - spec/requests/sites_spec.rb
+  rationale: >
+    Component spec covers presentation: form action points at site_path,
+    _method hidden input carries 'delete', DaisyUI btn-error-sm classes
+    present, data-turbo-confirm attribute with the correctly interpolated
+    site name. Request spec covers behavior: destroy changes Site count
+    by -1, cascade deletes CheckResults via dependent: :destroy (explicit
+    test with 2 pre-seeded results), 404 on missing site. No duplicated
+    assertions — component never asserts count change, request never
+    asserts markup.
+
+assumptions:
+  - "dependent: :destroy from slice 4 fires correctly in a destroy request path. The slice-4 model spec verified the association-level cascade; this slice re-verifies end-to-end through the controller, which is where a future refactor (e.g. destroy_async, soft-delete) would break silently."
+  - "button_to in Rails 8 wraps its button in a form and forwards data: { turbo_confirm: ... } passed via form: { data: { ... } }. A Turbo JS layer reads the confirm from the form element, not the button. Verified by the data-turbo-confirm component spec."
+  - "DELETE on a missing site returns 404 via Rails default rescue — same path as GET /sites/:id with a bad id, covered in slice 6."
+
+specifications:
+  - "Destroying a site cascades its check history via dependent: :destroy. The controller does NOT manually purge check_results before destroying the site."
+  - "Destroy flow responds with a redirect + flash, not a Turbo Stream. The Turbo confirm is purely a client-side guard; there is no progressive enhancement via Turbo Streams in this slice."
+  - "DeleteButtonComponent is the ONLY place in the app that renders a delete button for a site. Slice 10 consumes it; future views wanting to delete a site must also go through the component, not inline button_to calls."
+
+deviations_from_plan: >
+  None substantive. Minor: the plan's file list said
+  'app/components/delete_button_component.html.erb' uses a button with
+  data-turbo-method/turbo-confirm attributes. Implementation uses button_to
+  with form-level Turbo confirm because Rails 8 + Turbo's confirm lookup is
+  on the form, not the button. Functionally equivalent; the component spec
+  verifies the right attribute is on the right element.
+
+trade_offs: >
+  reversibility is flagged as 'entangled' rather than 'reversible' because
+  this slice couples three concerns that can't be individually undone: the
+  destroy route, the controller action, and the has_many dependent behavior
+  from slice 4 (which is load-bearing and covered by both the model and
+  request specs). Reverting this slice alone does not break anything, but
+  reverting this slice AND slice 4 together would leave orphaned CheckResult
+  rows if any destroy happened in between — a full entanglement chain.
+
+  DeleteButtonComponent is introduced one slice before it's wired into any
+  view (slice 10 uses it from the index row and the detail card). Alternative:
+  inline the button_to in slice 10 and skip the component entirely. Rejected
+  because (a) the confirm message interpolation is non-trivial enough that
+  slice 10's index.html.erb would grow by 8+ lines per use, (b) slice 10's
+  intent is wiring-only, not new-component-introduction, (c) having the
+  component with a spec here keeps slice 10's diff pure wiring.
+
+interfaces:
+  consumed:
+    - "ApplicationComponent"  # slice 2
+    - "Site"  # model, used in the button_to path helper
+  published:
+    - "SitesController#destroy"
+    - "DeleteButtonComponent.new(site:)"
+
+self_review:
+  controller_guardrails: "before_action :set_site only: [:show, :edit, :update, :destroy] — the final expansion. No per-action Site.find anywhere. resources :sites line now contains all 7 CRUD actions explicitly, not the bare 'resources :sites' shortcut — kept the symbols explicit so the git history shows each action being added one-by-one."
+  destroy_race_conditions: "Called out in Epic 2's plan: destroying a site with in-flight PerformCheckJob rows is a race condition accepted as MVP risk. The Site.destroy call happens synchronously in the request; any Solid Queue job that loads this site after destroy will get ActiveRecord::RecordNotFound, which the job does not currently handle. Future ops epic will add rescue_from in PerformCheckJob. Not fixing here per plan."
+  metz: "SitesController grew to 41 lines, 8 methods, all ≤3 lines. DeleteButtonComponent is 11 lines, 2 methods. Under Metz."
+  dependent_destroy_integration_test: "The 'cascade-deletes the site's check results' spec is the first end-to-end test of dependent: :destroy through an HTTP request. Slice 4's model spec covered the association-level cascade; this slice covers the controller-level cascade. Both are necessary — a future change that swaps dependent: :destroy for a manual purge must pass both tests."
+  testing_boundary: "Component asserts markup (form action, _method hidden input, DaisyUI classes, data-turbo-confirm text). Request asserts behavior (record count deltas, redirect, 404). No overlap."
+
+confidence: high
+reviewer_attention:
+  - "app/components/delete_button_component.html.erb:4 — data-turbo-confirm is on the form wrapper, not the button. button_to's form: { data: { ... } } syntax is subtle. Moving the attribute to the button would break the confirm prompt silently — the component spec catches it, but the markup looks 'wrong' to anyone used to button-level data attributes."
+  - "spec/requests/sites_spec.rb:207-214 — the cascade-deletes spec. Load-bearing for dependent: :destroy. If this spec ever gets removed or skipped, the cascade guarantee regresses to 'probably works'."
+  - "app/controllers/sites_controller.rb:24-27 — destroy does no soft-delete, no archival, no event broadcast. A future audit-log epic will need to hook in here; the current shape is the simplest possible destroy."
