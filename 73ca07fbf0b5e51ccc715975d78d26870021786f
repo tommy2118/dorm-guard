@@ -1,0 +1,116 @@
+intent: >
+  Render a site detail view at GET /sites/:id with metadata and a paginated
+  check history table, built from two DaisyUI ViewComponents. First reader
+  of the has_many :check_results association from slice 4.
+
+slice: 6/10
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - config/routes.rb
+    - app/controllers/sites_controller.rb
+    - app/components/site_detail_component.rb
+    - app/components/site_detail_component.html.erb
+    - spec/components/site_detail_component_spec.rb
+    - spec/components/previews/site_detail_component_preview.rb
+    - app/components/check_history_table_component.rb
+    - app/components/check_history_table_component.html.erb
+    - spec/components/check_history_table_component_spec.rb
+    - spec/components/previews/check_history_table_component_preview.rb
+    - app/views/sites/show.html.erb
+    - spec/requests/sites_spec.rb
+  actual:
+    - app/components/check_history_table_component.html.erb
+    - app/components/check_history_table_component.rb
+    - app/components/site_detail_component.html.erb
+    - app/components/site_detail_component.rb
+    - app/controllers/sites_controller.rb
+    - app/views/sites/show.html.erb
+    - config/routes.rb
+    - spec/components/check_history_table_component_spec.rb
+    - spec/components/previews/check_history_table_component_preview.rb
+    - spec/components/previews/site_detail_component_preview.rb
+    - spec/components/site_detail_component_spec.rb
+    - spec/requests/sites_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/components/site_detail_component_spec.rb
+    - spec/components/check_history_table_component_spec.rb
+    - spec/requests/sites_spec.rb
+  rationale: >
+    Coverage split follows the testing boundary in the plan. Component specs
+    cover presentation — header labels, empty state, em-dash fallback, row
+    count, successful vs failed row rendering. Request spec covers behavior —
+    route resolves, status codes for found and not-found, empty-history copy,
+    populated history renders persisted data, page-size limit of 25 enforced
+    by creating 27 results and asserting 25 rows. No duplicate assertions.
+
+assumptions:
+  - "Rails 8 default test env shows exceptions as :rescuable, so ActiveRecord::RecordNotFound becomes a 404 response rather than a re-raised exception in request specs. The first draft of the 404 spec used expect { ... }.to raise_error and failed; updating to have_http_status(:not_found) aligned with Rails 8 default rescue behavior."
+  - "The (site_id, checked_at desc) composite index from Epic 1 (db/schema.rb:22) services site.check_results.order(checked_at: :desc) without a table scan. No new migration needed — verified by the plan, not by EXPLAIN here."
+
+specifications:
+  - "SitesController uses a single before_action :set_site, only: [:show] hook (will be expanded in slices 7/8/9 to cover edit/update/destroy). The show action ONLY loads its pagy tuple and does not do any per-view ordering beyond the .order(checked_at: :desc) call — the component receives an already-ordered collection."
+  - "CheckHistoryTableComponent renders status_code as the literal integer or an em-dash when nil; never as 'N/A' or 'missing'. The em-dash convention is used twice in this slice (status_code and error_message) and is now the app-wide convention for missing tabular data."
+  - "The detail page's pagy_nav is rendered conditionally (@pagy.pages > 1), so a site with fewer than 26 results shows no navigation UI at all. Intentional — an unused nav is noise."
+  - "404 on missing site is Rails default behavior; no custom rescue_from in SitesController. A future auth/security epic may want to swap this for a generic 404-or-403 based on ownership, but not this slice."
+
+deviations_from_plan: >
+  One test spec went through a wrong-shape iteration (expect { }.to raise_error
+  ActiveRecord::RecordNotFound → expect(response).to have_http_status(:not_found))
+  during drafting. Final shape matches Rails 8 request-spec conventions. No
+  scope drift.
+
+trade_offs: >
+  SiteDetailComponent reads directly from a Site AR object rather than wrapping
+  it in a presenter. Considered a SitePresenter/decorator pattern, rejected
+  because (a) the component has only one string-formatting helper
+  (last_checked_label), (b) adding a presenter layer for one formatter is
+  premature abstraction, and (c) the Tell-Don't-Ask discipline is already
+  preserved — the view asks the component, the component computes, the site
+  is the data source. A presenter becomes worth it when 3+ formatters
+  accumulate; until then, inline helpers.delegator access is cheaper.
+
+  CheckHistoryTableComponent takes a raw array of results rather than a
+  Pagy-aware wrapper. Pagination UI lives in the view (pagy_nav), not in
+  the table component. This keeps the table component reusable in contexts
+  that never paginate (e.g. a Lookbook preview, a future admin panel showing
+  the last 5 results).
+
+interfaces:
+  consumed:
+    - "StatusBadgeComponent.new(status:)"  # from slice 3
+    - "Site#check_results -> ActiveRecord::Relation(CheckResult)"  # from slice 4
+    - "ApplicationController#pagy(collection, **opts)"  # from slice 5
+    - "ApplicationHelper#pagy_nav(pagy)"  # from slice 5
+  published:
+    - "SitesController#show"
+    - "SiteDetailComponent.new(site:)"
+    - "CheckHistoryTableComponent.new(results:)"
+
+self_review:
+  controller_guardrails: "before_action :set_site with only: [:show] per the Epic 2 decision. Will grow the only: array in slices 7/8/9, never per-action lookup code. site_params is not needed yet — added in slice 7 when create/update require it."
+  tell_dont_ask: "Views call component methods (last_checked_label, checked_at_label, status_code_label) instead of branching on nil or calling helpers directly. Components call helpers.time_ago_in_words via the standard ViewComponent helpers delegation."
+  metz: "SitesController is 16 lines, 3 methods, all ≤3 lines. SiteDetailComponent is 12 lines, 3 methods. CheckHistoryTableComponent is 23 lines, 6 methods, all ≤2 lines. All under Metz limits."
+  testing_boundary: "Component specs assert markup (span.badge, table, tbody tr count, column headers). Request spec asserts behavior (status codes, persisted data in response body, 25-row page limit). No duplicate assertions across both — e.g. component spec checks the em-dash renders, request spec never looks for em-dashes."
+  query_in_controller: "site.check_results.order(checked_at: :desc) lives in the controller, not the view. Plan guardrail preserved."
+  slice_purity: "Intent is one sentence, one coupled behavior (detail page with paginated history). The two components are tightly coupled to the show action — splitting them across slices would force an intermediate commit with a show action rendering a half-done view."
+
+confidence: high
+reviewer_attention:
+  - "spec/requests/sites_spec.rb:91-97 — the 27-result pagination assertion. Creates 27 CheckResults and asserts the response has exactly 25 <tr> tags (subtracting the header). If pagy's limit default ever changes in config/initializers/pagy.rb, this test will fail loudly, which is the intent."
+  - "app/components/check_history_table_component.rb:16-22 — status_code_label and error_label both use .presence || '—'. If CheckResult changes error_message from nullable to required, the '—' branch becomes dead but the component spec will still pass (the em-dash fallback is defensive against nil, not the empty string). Worth a follow-up if the schema tightens."
+  - "app/controllers/sites_controller.rb:9 — the .order(checked_at: :desc) call relies on the Epic 1 composite index. If a future migration drops that index, reads on this action go O(N log N) without any spec failure."
