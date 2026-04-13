@@ -1,0 +1,104 @@
+intent: >
+  Let users create sites through the browser with inline validation errors and
+  a success flash, driven by a reusable SiteFormComponent shared with slice 8.
+
+slice: 7/10
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - config/routes.rb
+    - app/controllers/sites_controller.rb
+    - app/components/site_form_component.rb
+    - app/components/site_form_component.html.erb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+    - app/views/sites/new.html.erb
+    - spec/requests/sites_spec.rb
+  actual:
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/controllers/sites_controller.rb
+    - app/views/sites/new.html.erb
+    - config/routes.rb
+    - spec/components/previews/site_form_component_preview.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/requests/sites_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/components/site_form_component_spec.rb
+    - spec/requests/sites_spec.rb
+  rationale: >
+    Component spec covers #heading and #submit_label as unit methods (no
+    rendering needed — that would require an edit route that slice 8 hasn't
+    added yet), plus full-render tests for the new-site path covering
+    heading, submit button, DaisyUI input classes, Cancel link, and
+    validation-error rendering. Request spec covers GET /sites/new success,
+    POST /sites success with valid params + flash, mass-assignment
+    protection for status/last_checked_at, and POST /sites failure with
+    422 + error rendering. No duplicate assertions across the boundary.
+
+assumptions:
+  - "form_with(model: persisted_site) generates PATCH /sites/:id. Since the :update route doesn't exist until slice 8, full-render specs of the edit branch fail with ActionController::RoutingError. The first draft of the component spec rendered a persisted site to test the 'Update site' label and failed; the fix was to split: unit-test #heading/#submit_label directly (no render), and only render the new-site path in the full-markup specs."
+  - "Rack 3.2+ deprecates :unprocessable_entity in favor of :unprocessable_content. Rails 8 still accepts both but logs a deprecation on the old symbol. The slice proactively uses the new symbol."
+
+specifications:
+  - "site_params permits exactly [:name, :url, :interval_seconds] via strong params. :status and :last_checked_at are never user-assignable — this is enforced at the controller layer (not the model layer), with a request spec verifying that a malicious POST with status: 'up' is silently dropped."
+  - "SiteFormComponent is the single source of truth for the site form. New and Edit views (slices 7 and 8) both render it unchanged. The component picks 'Create site' vs 'Update site' and 'New site' vs 'Edit site' from site.persisted?, not from an explicit 'mode' kwarg."
+  - "Inline validation errors are rendered per-field using field_error(attr) which returns the first error message. Multi-error display is not supported — the first error is the fix-target, the rest follow from it."
+  - "Failed POSTs render :new with status :unprocessable_content (422). Rails standard pattern; no Turbo Stream, no inline JSON."
+
+deviations_from_plan: none
+
+trade_offs: >
+  SiteFormComponent accepts the whole Site object and reads site.persisted?,
+  site.errors inside the component. Alternative: pass mode: (:new | :edit) and
+  errors: as separate kwargs, making the component agnostic to Site. Rejected
+  because (a) it adds two extra arguments without clarity, (b) the Site class
+  is the natural source of truth for 'is this saved?' and 'what are your
+  errors?', (c) the tell-don't-ask violation — the component would be asking
+  callers to derive state that Site already knows.
+
+  Error rendering uses first-error-only via field_error(attr). Alternative:
+  render all errors as a bulleted list per field. Rejected because the Site
+  model's validations are straightforward and the first error is almost always
+  the only one (presence then format, and format is only checked on non-blank
+  input). Slice 8's edit flow may revisit if we see multi-error cases.
+
+  Deprecation warning on :unprocessable_entity prompted an immediate switch to
+  :unprocessable_content. Alternative: suppress the warning, keep the old
+  symbol. Rejected because leaving a deprecation noise in a slice that already
+  fixed it is laziness — the fix was two lines.
+
+interfaces:
+  consumed:
+    - "ApplicationComponent"  # slice 2
+  published:
+    - "SitesController#new"
+    - "SitesController#create"
+    - "SiteFormComponent.new(site:)"
+
+self_review:
+  controller_guardrails: "One before_action :set_site (still only: [:show] — slice 8 expands it). site_params permits only mutable user fields. Redirect/render flow matches Rails standard. No query logic in views. One action pair (new + create) added; no 'while I'm in here' additions."
+  metz: "SitesController is now 27 lines, 5 methods, all ≤4 lines. SiteFormComponent is 18 lines, 4 methods. All under Metz."
+  dry_without_wrong_abstraction: "Form markup is in ONE place (SiteFormComponent), not duplicated across new.html.erb and edit.html.erb. Slice 8 reuses it verbatim. This is the right abstraction — two views share one form."
+  testing_boundary: "Component spec covers unit methods (#heading, #submit_label) AND rendered markup (input classes, error p tags, cancel link). Request spec covers behavior (status codes, record count, flash, mass assignment). No duplicated assertions."
+  mass_assignment_defense_in_depth: "Mass-assignment protection is defended at the request layer (site_params allowlist) AND verified by a request spec that specifically tries to inject status and last_checked_at. If a future refactor loosens site_params, this spec catches it."
+
+confidence: high
+reviewer_attention:
+  - "app/controllers/sites_controller.rb:31 — params.expect(site: [:name, :url, :interval_seconds]) is the Rails 8+ strong-params API (replaces params.require(:site).permit(...)). Less common; readers unfamiliar with Rails 8 may mistake it for an error-handling call."
+  - "spec/requests/sites_spec.rb:135-142 — the mass-assignment defense spec. If anyone ever widens site_params, this is where the regression lands."
+  - "app/components/site_form_component_spec.rb:16-27 — #heading/#submit_label tested as unit methods rather than via rendering. The reason (route doesn't exist yet) is subtle and will confuse someone reading the spec cold; reviewer should verify slice 8 does NOT duplicate these assertions via rendering (keeps the testing boundary clean)."
