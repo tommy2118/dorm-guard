@@ -24,14 +24,19 @@ Rails.application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
-  # Assume all access to the app is happening through a SSL-terminating reverse proxy.
-  # config.assume_ssl = true
+  # Kamal's Thruster proxy probes /up over plain HTTP inside the container
+  # before TLS is wired up. Both the SSL redirect middleware and the host
+  # authorization middleware need to let /up through, so the exclusion
+  # predicate is shared.
+  health_check_exclude = ->(request) { request.path == "/up" }
 
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
-
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  # Kamal's Thruster proxy terminates TLS and forwards to Puma over plain HTTP
+  # inside the container; `assume_ssl` tells Rails to treat the forwarded
+  # request as secure, and `force_ssl` redirects any still-plain-HTTP traffic
+  # that reaches Puma directly.
+  config.assume_ssl = true
+  config.force_ssl = true
+  config.ssl_options = { redirect: { exclude: health_check_exclude } }
 
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
@@ -57,8 +62,12 @@ Rails.application.configure do
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false
 
-  # Set host to be used by links generated in mailer templates.
-  config.action_mailer.default_url_options = { host: "example.com" }
+  # Set host to be used by links generated in mailer templates. Host comes
+  # from ENV so the same image deploys to any domain.
+  config.action_mailer.default_url_options = {
+    host: ENV.fetch("DORM_GUARD_HOST", "dorm-guard.com"),
+    protocol: "https"
+  }
 
   # Specify outgoing SMTP server. Remember to add smtp/* credentials via bin/rails credentials:edit.
   # config.action_mailer.smtp_settings = {
@@ -79,12 +88,12 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection and other `Host` header attacks.
-  # config.hosts = [
-  #   "example.com",     # Allow requests from example.com
-  #   /.*\.example\.com/ # Allow requests from subdomains like `www.example.com`
-  # ]
-  #
-  # Skip DNS rebinding protection for the default health check endpoint.
-  # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  # Enable DNS rebinding protection and other Host header attacks. The host
+  # allowlist reads from the same ENV var as default_url_options so there's
+  # exactly one source of truth for the public domain per deploy.
+  config.hosts = [ ENV.fetch("DORM_GUARD_HOST", "dorm-guard.com") ]
+
+  # Kamal's /up health probe arrives with the container's internal Host
+  # header, not the public domain, so the allowlist needs to let it through.
+  config.host_authorization = { exclude: health_check_exclude }
 end
