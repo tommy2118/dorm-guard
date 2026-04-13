@@ -1,0 +1,74 @@
+intent: >
+  Replace bash-only `source` with POSIX `.` in .kamal/secrets so
+  the script works under dash, which is what Kamal's sh -c
+  invocation actually uses on Debian.
+
+slice: 6g/9
+kind: fix
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - .kamal/secrets
+  actual:
+    - .kamal/secrets
+  drift: []
+
+proof:
+  tests_run: |
+    bin/dc bash -c 'sh -c ". .kamal/secrets; env | grep -E \"KAMAL_REGISTRY|SMTP_USER|SMTP_PASSWORD|DORM_GUARD_ALERT\""'
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Shell-script POSIX-compat fix. The verification is running
+    the exact same command kamal runs under the hood and checking
+    the resolved env. Automating this inside rspec would add a
+    shell subprocess test that duplicates kamal's behavior.
+
+verification:
+  tested: []
+  manual:
+    - "sh -c '. .kamal/secrets; env' inside the container resolves all five expected secrets (KAMAL_REGISTRY_PASSWORD, SMTP_USER_NAME, SMTP_PASSWORD, DORM_GUARD_ALERT_TO, RAILS_MASTER_KEY)"
+    - "POSIX `.` is implemented by dash, bash, zsh, ksh, busybox sh — every shell Kamal is likely to encounter"
+
+assumptions:
+  - "Kamal 2.11 runs .kamal/secrets via `sh -c` (dash on Debian). Verified by reproducing the failure with sh -c and the fix with the same invocation. If a future Kamal version explicitly uses bash, the POSIX form still works."
+  - "Debian's default sh = dash remains true for the Rails devcontainer base image. If the base image ever switches to bash-as-sh, the POSIX form still works."
+
+specifications:
+  - ".kamal/secrets must be POSIX-compliant. bash-only features (source, [[ ]], arrays, $BASH_SOURCE) are forbidden. Rule exists so the script works under whatever shell Kamal chooses to invoke it with."
+
+deviations_from_plan: >
+  Not in the original plan. Seventh letter-suffixed mid-flight insertion in Epic 3 (5B through 5G). Slice 5F fixed the $(dirname $0) bug but missed that `source` is also bash-specific — a second bug in the same file, same failure mode. Lesson: when fixing a shell-script bug, check the whole script for related portability issues before committing.
+
+trade_offs: >
+  Could have flipped .kamal/secrets's shebang to #!/usr/bin/env bash
+  and relied on kamal invoking it via `bash -c` instead of `sh -c`.
+  Rejected: kamal controls the invocation, not us — changing the
+  shebang has no effect when the file is sourced. POSIX is the
+  right target.
+
+  Used `. ./.env` (explicit `./` prefix) instead of `. .env`.
+  Reason: POSIX's dot command searches PATH by default, which
+  can pick up an unrelated `.env` elsewhere on the path. The
+  explicit relative prefix forces local resolution.
+
+self_review:
+  consistency: "POSIX shell is the honest target for any file under .kamal/ since kamal itself dictates the shell. The previous bash-centric mindset bit us twice (Slice 5F and 5G)."
+  how_could_this_have_been_caught_earlier: >
+    The Slice 5F test used `bash -c 'source .kamal/secrets'` for
+    verification — which proved the fix worked under bash but
+    didn't test dash, which is what kamal actually uses. The
+    test and the production invocation were different shells.
+    Lesson: when testing shell-script fixes, match the shell
+    to the runtime (`sh -c` here, not `bash -c`).
+
+principle_violations: []
+
+confidence: high
+reviewer_attention:
+  - .kamal/secrets:23-25   # The `. ./.env` line. If a future maintainer 'simplifies' this to `source .env` or even `. .env` without the ./ prefix, we break. The comment above the line explains why — read it before editing.
