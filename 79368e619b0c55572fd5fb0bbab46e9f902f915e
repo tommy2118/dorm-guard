@@ -1,0 +1,94 @@
+intent: >
+  The first manual `kamal setup` against dorm-guard.com ran to
+  successful completion — image built, pushed to DOCR, pulled on
+  the droplet, kamal-proxy deployed with TLS via Let's Encrypt,
+  /up returning HTTP/2 200 over the public internet. Empty commit
+  marking the operational milestone; all code changes landed in
+  earlier slices (1 through 5I).
+
+slice: 7/9
+kind: chore
+behavior_change: additive
+reversibility: entangled
+
+scope:
+  declared: []
+  actual: []
+  drift: []
+
+proof:
+  tests_run: curl -sSI https://dorm-guard.com/up
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Operational milestone — no code diff. Verification is
+    external: live HTTPS request, TLS cert chain inspection,
+    kamal app logs. The test suite is still 164/164 from the
+    last code-touching slice; no regression.
+
+verification:
+  tested:
+    - "bin/dc bundle exec rspec — 164/164 (unchanged from Slice 5B; Slice 5I Dockerfile edit doesn't affect Ruby code paths)"
+  manual:
+    - "curl -sSI https://dorm-guard.com/up → HTTP/2 200 with HSTS max-age=63072000 + full security headers"
+    - "openssl s_client → subject=CN=dorm-guard.com, issuer=Let's Encrypt E8, Verify return code: 0 (ok) — real Let's Encrypt cert, not self-signed"
+    - "kamal app logs | tail — ScheduleDueChecksJob firing on the minute, /up HEAD request from operator's laptop logged with 7ms response time"
+    - "docker ps on droplet — dorm_guard-web-34615ffa... container running, kamal-proxy container running"
+    - "Image at registry.digitalocean.com/nightloom/dorm_guard:34615ffac4eb70d85e29645c4566d5437670f8da and :latest (both tags pushed)"
+
+assumptions:
+  - "Let's Encrypt's rate limits haven't been burned — this was the first cert issuance for dorm-guard.com from this droplet, so we're well under the 50 certs/domain/week limit"
+  - "The droplet's clock is within NTP sync bounds — Let's Encrypt requires reasonable time for cert validation (ubuntu-24-04-x64 syncs via systemd-timesyncd by default)"
+  - "DigitalOcean will not move the droplet to a new IP without operator intervention — the Route 53 A record is static-pinned and would need manual update if DO migrates the instance"
+  - "db:prepare running db:seed on first boot is Rails 8's documented behavior — the 32 fixture rows are an honest consequence, not a deploy bug"
+
+specifications:
+  - "dorm-guard.com is live at 104.236.125.236 with TLS terminated by kamal-proxy (Thruster) and Let's Encrypt auto-renewal on the 60-day cycle."
+  - "The deploy path is: operator laptop → bin/dc (devcontainer) → kamal → DOCR (sfo2) → droplet (nyc3). Every step of this chain is verified working."
+  - "kamal-proxy listens on 80/443 and proxies to the dorm_guard-web container on 80 (internal). Host header routing is by dorm-guard.com."
+
+deviations_from_plan: >
+  Slice 6 in the original 9-slice plan was called "First manual deploy (`kamal setup`)" and expected to succeed on the first attempt with only the runbook evidence as the commit body. Reality: 8 attempts, 6 intermediate fix slices (5B Mailgun→SES, 5C docker-in-devcontainer, 5D ssh-agent forwarding, 5E buildx, 5F/5G/5H secrets plumbing, 5I build-time dummies). The plan underestimated the 'make bin/dc kamal setup work' sub-problem. Each intermediate fix was committed with its own agent-note so the reader can trace the full sequence of blockers.
+
+addresses: []
+
+trade_offs: >
+  Committed --allow-empty as planned rather than squashing the
+  Slice 5 series into one 'Epic 3: ship it' commit. Reason:
+  this project's value proposition is the honest workflow
+  artifact. A squashed 'ship' commit would hide the six
+  unplanned fix slices from readers, defeating the point of
+  the in-the-open pairing workflow. The agent-notes series
+  5B-5I is the actual artifact a future engineer (or curious
+  visitor) should see.
+
+self_review:
+  consistency: >
+    The plan said Slice 6 is --allow-empty with runbook evidence
+    in the commit body + agent-note. This commit matches that
+    shape, plus an honest "Known findings" section flagging the
+    three post-deploy issues that Slice 7 will address.
+  completeness: >
+    Covers: infrastructure provisioned, 10-step deploy walk,
+    3-channel verification (curl, openssl, logs), and 3 known
+    follow-up items. Nothing swept under the rug.
+  what_went_wrong_in_planning: >
+    The 9-slice Epic 3 plan treated 'kamal setup runs' as a
+    single slice. In reality, a first-time kamal setup against
+    a devcontainer-based dev loop needs: (a) docker CLI + socket
+    in the container, (b) ssh-agent forwarding, (c) buildx for
+    cross-platform, (d) correct .kamal/secrets plumbing, (e) a
+    Dockerfile that builds under a production.rb with fail-fast
+    ENV.fetch. Each of those turned into its own mid-flight
+    slice. Lesson: when planning a 'first deploy' slice, ask
+    specifically 'what are the preconditions for the deploy
+    command itself to work end-to-end from this dev environment'
+    — not just 'does the config file look right.'
+
+confidence: medium
+reviewer_attention:
+  - "commit body 'Known findings' section 1-3  # Read these before running any follow-up slice. Each finding has a specific fix path; blending them risks mixing unrelated concerns."
+  - "production SMTP is currently silently broken. Any future feature that depends on outbound mail (auth confirmation emails in Epic 4, for instance) must assume this is fixed first."
