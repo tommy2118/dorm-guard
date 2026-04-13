@@ -1,0 +1,115 @@
+intent: >
+  Wire Kamal to DigitalOcean (DOCR registry + Thruster Let's Encrypt
+  proxy for dorm-guard.com), source secrets from .env, and enforce
+  the WEB_CONCURRENCY=1 pin at runtime via a puma.rb boot guard so
+  the pin isn't cosmetic.
+
+slice: 5/9
+kind: feature
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - config/deploy.yml
+    - .kamal/secrets
+    - .env.example
+  actual:
+    - config/deploy.yml
+    - .kamal/secrets
+    - .env.example
+    - config/puma.rb
+    - spec/config/puma_concurrency_guard_spec.rb
+  drift:
+    - config/puma.rb
+    - spec/config/puma_concurrency_guard_spec.rb
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+7 examples"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/config/puma_concurrency_guard_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop config/puma.rb spec/config/puma_concurrency_guard_spec.rb
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "Full rspec suite 162/162 including new puma_concurrency_guard_spec"
+    - "puma.rb guard permits the default deploy combination (in-Puma, WC=1)"
+    - "puma.rb guard blocks the double-fire combination (in-Puma, WC>1)"
+    - "puma.rb guard permits non-in-Puma deploys at any concurrency"
+  manual:
+    - "bin/dc kamal config parses cleanly and dumps the expected env.clear + env.secret + proxy shape"
+    - "bin/dc bash -n .kamal/secrets — shell syntax clean"
+    - "YAML parse confirms env.clear contains WEB_CONCURRENCY=1 and env.secret contains MAILGUN_SMTP_USER_NAME/PASSWORD"
+
+assumptions:
+  - "DigitalOcean Container Registry accepts the API access token as both username and password (DOCR auth model — documented in DO docs, same pattern as ghcr.io)"
+  - "Kamal 2.11.0's `proxy.host` block auto-provisions a Let's Encrypt cert on first `kamal setup` as long as port 80 is reachable and the A record resolves (documented Kamal behavior)"
+  - "The REPLACE-DOCR-NAMESPACE and REPLACE-DROPLET-IP placeholders will be substituted by the operator before Slice 6 — the slice 5 ADR will include a 'grep for REPLACE- in config/deploy.yml' precondition"
+  - "Rails 8's scaffold puma.rb (preserved to line 38) does NOT call `workers` — Puma runs in single-process mode unless the operator explicitly enables cluster mode. The runtime guard catches the hypothetical future where someone enables cluster mode without reading the ADR."
+
+specifications:
+  - "`.env` is the shared contract between laptop and CI. `.kamal/secrets` sources it; CI writes it from GitHub secrets; `.env.example` is the schema. A required deploy var landing in config/deploy.yml without a .env.example line is a process violation."
+  - "WEB_CONCURRENCY=1 is pinned both in deploy.yml AND enforced at boot by a puma.rb guard. The pin and the guard are a single atomic constraint — changing one without the other is a regression. If a future slice needs WEB_CONCURRENCY>1, it must also move Solid Queue to a dedicated Kamal accessory."
+  - "The two REPLACE- placeholders in deploy.yml are deliberate — they parse as valid YAML but fail loudly at deploy time (registry push fails, SSH fails) so a forgotten substitution cannot cause a successful-but-wrong deploy."
+
+deviations_from_plan: >
+  Added config/puma.rb + spec/config/puma_concurrency_guard_spec.rb — plan said 'pin WEB_CONCURRENCY=1 in deploy.yml'. Added a runtime enforcement guard because the pin alone is cosmetic (Rails 8 scaffold puma.rb doesn't read WEB_CONCURRENCY). Enforcing the constraint at config time is the real load-bearing fix per feedback_enforce_constraints_in_config. The drift is the same failure domain as the pin itself.
+
+trade_offs: >
+  Chose REPLACE- literal placeholders over ERB interpolation
+  (`<%= ENV["DOCR_NAMESPACE"] %>`) in deploy.yml because Kamal's YAML
+  reader supports ERB but the standard docs don't, and ERB in config
+  files invites "works-on-my-laptop" bugs when an ENV var is missing
+  silently. Placeholders fail loudly at push/SSH time — the same
+  fail-loudly principle as the Mailgun credentials without defaults.
+  Cost: operator must grep for REPLACE- before every deploy. ADR
+  Slice 5 will include this as a runbook step.
+
+interfaces:
+  consumed:
+    - "DORM_GUARD_HOST (from Slice 2A) — deploy.yml.env.clear.DORM_GUARD_HOST mirrors the value production.rb reads"
+    - "MAILGUN_SMTP_{ADDRESS,PORT,USER_NAME,PASSWORD} (from Slice 2B)"
+    - "DORM_GUARD_MAIL_FROM (from Slice 3)"
+    - "DORM_GUARD_ALERT_TO (existing in downtime_alert_mailer.rb)"
+    - "RAILS_MASTER_KEY (existing)"
+    - "SOLID_QUEUE_IN_PUMA (existing in puma.rb and config/recurring.yml)"
+  published:
+    - "KAMAL_REGISTRY_PASSWORD env var (required, no default) — DOCR access token"
+    - "WEB_CONCURRENCY env var (pinned at 1 in deploy.yml, enforced by puma.rb boot guard)"
+
+self_review:
+  consistency: >
+    config/deploy.yml follows the Rails 8 Kamal scaffold shape — the
+    same top-level keys in the same order. Only the values changed.
+    .kamal/secrets follows the scaffold comment pattern (laptop vs
+    password-manager vs ENV) and picks the ENV path.
+  metz: >
+    deploy.yml is 110 lines — a config file with comments, not a
+    class. puma.rb is still 56 lines. No class-size concerns.
+  duplication: >
+    KAMAL_REGISTRY_PASSWORD appears in three places in deploy.yml
+    (registry.username, registry.password, env.secret). This is
+    DOCR's required shape — token as both username and password —
+    and env.secret ensures the running container can also read it
+    if ever needed. Not a duplication smell.
+  error_handling: >
+    Fail-loud posture throughout: REPLACE- placeholders fail at
+    push/SSH, missing Mailgun creds fail at boot (Slice 2B), missing
+    KAMAL_REGISTRY_PASSWORD fails at push. The runtime puma.rb guard
+    fails at boot with an actionable message pointing at the ADR.
+
+confidence: high
+reviewer_attention:
+  - config/deploy.yml:13-19     # The REPLACE-DROPLET-IP placeholder + operator TODO. If this lands in main unsubstituted, `kamal setup` will fail at SSH.
+  - config/deploy.yml:38-45     # The REPLACE-DOCR-NAMESPACE placeholder in registry.server. Paired with the drop-let IP placeholder.
+  - config/puma.rb:37-46        # The SOLID_QUEUE_IN_PUMA/WEB_CONCURRENCY runtime guard. If someone refactors this without reading the ADR they WILL create the scheduler double-fire bug it prevents.
