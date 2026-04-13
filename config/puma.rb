@@ -35,6 +35,16 @@ port ENV.fetch("PORT", 3000)
 plugin :tmp_restart
 
 # Run the Solid Queue supervisor inside of Puma for single-server deployments.
+# Fail fast if the operator enables in-Puma Solid Queue AND runs Puma in cluster
+# mode: each worker would instantiate its own supervisor and the recurring
+# `schedule_due_checks` entry from config/recurring.yml would fire N× per minute.
+# See docs/decisions/pr-0021-kamal-deploy.md for the rationale; config/deploy.yml
+# pins WEB_CONCURRENCY=1 in production to make this branch unreachable.
+if ENV["SOLID_QUEUE_IN_PUMA"] && ENV.fetch("WEB_CONCURRENCY", "1").to_i > 1
+  raise "Refusing to boot: SOLID_QUEUE_IN_PUMA=true with WEB_CONCURRENCY=#{ENV['WEB_CONCURRENCY']} " \
+        "would run the Solid Queue recurring scheduler once per Puma worker. " \
+        "Set WEB_CONCURRENCY=1 or move Solid Queue to a dedicated Kamal accessory."
+end
 plugin :solid_queue if ENV["SOLID_QUEUE_IN_PUMA"]
 
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
