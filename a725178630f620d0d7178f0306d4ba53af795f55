@@ -1,0 +1,202 @@
+intent: >
+  Add TcpChecker and extract per-check-type form components so the SiteFormComponent
+  shell stops branching on check_type (plan-mandated refactor when the second
+  conditional field lands).
+
+slice: 4/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - app/services/tcp_checker.rb
+    - db/migrate/20260414200003_add_tcp_port_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/components/site_form/type_fields_component.rb
+    - app/components/site_form/type_fields_component.html.erb
+    - app/components/site_form/ssl_fields_component.rb
+    - app/components/site_form/ssl_fields_component.html.erb
+    - app/components/site_form/tcp_fields_component.rb
+    - app/components/site_form/tcp_fields_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/services/tcp_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  actual:
+    - app/services/tcp_checker.rb
+    - db/migrate/20260414200003_add_tcp_port_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/components/site_form/type_fields_component.rb
+    - app/components/site_form/type_fields_component.html.erb
+    - app/components/site_form/ssl_fields_component.rb
+    - app/components/site_form/ssl_fields_component.html.erb
+    - app/components/site_form/tcp_fields_component.rb
+    - app/components/site_form/tcp_fields_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/services/tcp_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/tcp_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "Socket.tcp accepts a block and closes the socket automatically when the block returns, so Socket.tcp(host, port, connect_timeout: N, &:close) is both the happy-path and the cleanup"
+  - "ViewComponent's render method can receive form builders as constructor args; the form builder remains valid when passed across component boundaries within the same template render"
+  - "ViewComponent spec unit-testing of components that require an ActionView form builder cannot build one outside a real view context; testing per-type field rendering via the parent SiteFormComponent's render_inline covers them through the integration path instead"
+
+specifications:
+  - "TcpChecker.check(host:, port:) opens a TCP socket with connect_timeout: 5 and immediately closes; success iff the connect completes"
+  - "TcpChecker uses Socket.tcp(host, port, connect_timeout: N) — NOT Timeout.timeout around TCPSocket.new (unsafe), NOT IO.select with connect_nonblock (reinventing the wheel)"
+  - "TcpChecker.RECOVERABLE_ERRORS covers SocketError, ECONNREFUSED, ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, EADDRNOTAVAIL, and IpGuard::BlockedIpError — any of these becomes an error CheckOutcome"
+  - "IpGuard.check!(host) runs before Socket.tcp — a blocked host never reaches the socket layer"
+  - "CheckDispatcher routes :tcp to TcpChecker.check(host: URI.parse(site.url).host, port: site.tcp_port)"
+  - "Site validates tcp_port presence and numericality (1..65_535) only when check_type is :tcp"
+  - "Site#clear_irrelevant_config nulls tcp_port on any non-:tcp save"
+  - "SiteFormComponent renders SiteForm::TypeFieldsComponent once unconditionally; TypeFieldsComponent is the only place in the form stack that branches on site.check_type"
+  - "SiteForm::TypeFieldsComponent dispatches to SslFieldsComponent / TcpFieldsComponent by a case statement on site.check_type; :http renders nothing (shared fields only)"
+  - "SiteForm::SslFieldsComponent and SiteForm::TcpFieldsComponent each accept form: and site: constructor args; they do NOT know about each other or about check_type"
+
+deviations_from_plan: >
+  Dropped a unit spec for SiteForm::TypeFieldsComponent partway through
+  because ActionView's form builder cannot be constructed outside a real
+  view context without extensive plumbing, and the integration coverage
+  via site_form_component_spec renders the same code path through
+  render_inline. Not an intent shift — same coverage, less plumbing.
+
+trade_offs: >
+  Extracted per-type form components as classes (TypeFieldsComponent +
+  SslFieldsComponent + TcpFieldsComponent) rather than as Rails partials
+  or a single TypeFieldsComponent with an inline case-plus-big-ERB block.
+  Cost: three new class files where Slice 3 had one. Benefit: each leaf
+  component has a single reason to change and the plan's "extract
+  IMMEDIATELY" guidance is honored structurally, not just cosmetically.
+  Slices 5 and 6 add DnsFieldsComponent and ContentMatchFieldsComponent
+  under the same SiteForm:: namespace with zero edits to existing files.
+
+  Socket.tcp(host, port, &:close) is terser than an explicit open-and-close.
+  Cost: the block form means the socket lifetime is entirely hidden inside
+  the Socket.tcp call, which makes a future reader hunt for the "where is
+  it closed" answer. Benefit: no ensure clause needed, no leaked-socket
+  risk on exception paths, and the block form is the stdlib-documented
+  pattern for this exact case. Net win.
+
+interfaces:
+  consumed:
+    - "IpGuard.check!(host_or_ip) -> true | raises IpGuard::BlockedIpError"
+    - "CheckOutcome.new(status_code:, response_time_ms:, error_message:, checked_at:, body:, metadata:) -> CheckOutcome"
+    - "Site#check_type -> String"
+    - "Site#tcp_port -> Integer | nil"
+    - "Site#url -> String"
+  published:
+    - "TcpChecker.check(host:, port:) -> CheckOutcome"
+    - "CheckDispatcher.call(site) -> CheckOutcome | raises CheckDispatcher::UnknownCheckType"
+    - "Site#tcp? -> Boolean"
+    - "Site#tcp_port= (integer writer)"
+    - "Site::DEFAULT_TCP_PORT -> 80"
+    - "SiteForm::TypeFieldsComponent.new(form:, site:) -> component"
+    - "SiteForm::SslFieldsComponent.new(form:, site:) -> component"
+    - "SiteForm::TcpFieldsComponent.new(form:, site:) -> component"
+
+self_review:
+  tests: >
+    Added spec/services/tcp_checker_spec.rb with 7 cases (happy path with
+    socket close verification, ECONNREFUSED, ETIMEDOUT, EHOSTUNREACH, IpGuard
+    blocks before Socket.tcp is called, SocketError for DNS failures, response_time
+    non-negative). All network boundaries stubbed. Extended
+    spec/services/check_dispatcher_spec.rb with the :tcp dispatch case.
+    Extended spec/models/site_spec.rb with tcp_port validation and
+    clear_irrelevant_config for tcp_port. Extended spec/components/site_form_component_spec.rb
+    with :ssl and :tcp rendering contexts — each asserts the right per-type
+    field is present and the wrong one is absent. Added new_tcp_site preview
+    variant. Unit spec for TypeFieldsComponent was tried and removed; the
+    integration-through-the-shell path covers it cleanly.
+  consistency: >
+    TcpChecker structure mirrors SslChecker: class method entrypoint, instance
+    method of the same name, RECOVERABLE_ERRORS frozen constant, private
+    build_outcome helper. SiteForm:: namespace components follow the same
+    shape (form/site keyword args, attr_reader, field_error helper on leaves
+    that render inputs). The shell's render(SiteForm::TypeFieldsComponent.new)
+    matches the rest of the form's DaisyUI card-body flow.
+  metz: >
+    Measured. tcp_checker.rb is 63 lines, 6 methods. check is 4 body lines
+    plus a rescue clause. success_outcome 1, error_outcome 1, build_outcome
+    8 (single CheckOutcome expression), elapsed_ms 1. site.rb grew from 50
+    to 55 lines. check_dispatcher.rb grew from 27 to 29 lines (one new case
+    branch). site_form_component.html.erb dropped from 60 to 50 lines — the
+    tls_port block moved out. The three new leaf components are each under
+    15 lines of .rb (class + attr_reader + optional field_error helper) and
+    10-13 lines of ERB.
+  duplication: >
+    SslFieldsComponent and TcpFieldsComponent have near-identical class
+    bodies (initialize + attr_reader + field_error helper). Could be
+    extracted to a SiteForm::FieldsComponent base class; deferring
+    because two copies is cheaper than a base class with one override
+    point. If DNS and content-match (Slices 5-6) add two more near-identical
+    classes the base-class refactor is justified.
+  mocking: >
+    tcp_checker_spec mocks Socket.tcp and IpGuard.check! — both owned
+    internal or stdlib code. The block form of Socket.tcp is stubbed via
+    .and_yield(tcp_socket).and_return(nil), which matches the real stdlib
+    semantics (block return value is nil, socket closed by the block).
+  error_paths: >
+    RECOVERABLE_ERRORS enumerates seven exception classes. ECONNREFUSED,
+    ETIMEDOUT, EHOSTUNREACH, SocketError, and IpGuard::BlockedIpError each
+    have dedicated spec cases. ENETUNREACH and EADDRNOTAVAIL are covered
+    by the same rescue block as ECONNREFUSED (Errno descendants treated
+    identically). No unhandled exception path — the rescue is the only
+    exit for any error.
+  security: >
+    IpGuard.check! runs before Socket.tcp, which is the correct order for
+    the non-Faraday path. A TcpChecker spec explicitly asserts Socket.tcp
+    is NOT called when IpGuard raises — regression lock for the ordering.
+  performance: >
+    Each check opens one TCP socket with a 5s connect timeout, then closes
+    immediately. No DNS caching, no connection pooling. A 60s cadence on
+    a handful of sites is nowhere near needing that.
+  api: >
+    Additive. TcpChecker is new. Site#tcp?, Site#tcp_port, Site::DEFAULT_TCP_PORT
+    are new. CheckDispatcher gains a branch. The SiteForm:: namespace is
+    new. SiteFormComponent's CHECK_TYPE_LABELS hash gained a "tcp" key.
+    Existing callers unaffected.
+  dead_code: >
+    None. The three new SiteForm:: components are rendered from the shell
+    or from TypeFieldsComponent. TcpChecker is called from CheckDispatcher.
+    Site::DEFAULT_TCP_PORT is used in the TCP fields ERB template.
+
+confidence: high
+reviewer_attention:
+  - "app/services/tcp_checker.rb:30-37"  # the Socket.tcp block-form close and rescue list ordering
+  - "app/components/site_form/type_fields_component.html.erb"  # the dispatcher — scoped branching is the whole point of this slice
+  - "app/components/site_form_component.html.erb:32"  # the single delegation point that used to be conditional per-type inline fields
