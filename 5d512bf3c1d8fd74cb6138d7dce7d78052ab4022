@@ -1,0 +1,81 @@
+intent: >
+  Roll up all three findings from Slice 6 (post-deploy
+  verification) into a single code commit: guard db/seeds.rb
+  behind dev+SMOKE_SEED so production db:prepare doesn't
+  auto-seed, gate config/initializers/view_component.rb on
+  Rails.env.development? to stop Lookbook preview constants
+  from leaking into production eager_load, and narrow
+  DORM_GUARD_MAIL_FROM to the verified SES identity so SES's
+  IAM FromAddress condition is satisfied.
+
+slice: 7a/9
+kind: feature
+behavior_change: additive
+reversibility: reversible
+
+scope:
+  declared:
+    - config/initializers/view_component.rb
+    - db/seeds.rb
+    - config/deploy.yml
+    - spec/db/seeds_spec.rb
+  actual:
+    - config/initializers/view_component.rb
+    - db/seeds.rb
+    - config/deploy.yml
+    - spec/db/seeds_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+7 examples (new seeds spec)"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/db/seeds_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop config/initializers/view_component.rb db/seeds.rb spec/db/seeds_spec.rb
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "Full rspec suite 171/171 — +7 examples from the new seeds spec"
+    - "Seeds spec asserts: zero sites when neither guard is set, exactly 2 sites under SMOKE_SEED, expected names/URLs/intervals, idempotent on re-run, SSRF hygiene (no loopback/RFC1918 in any site.url line)"
+    - "bin/dc kamal config parses with the new DORM_GUARD_MAIL_FROM value"
+  manual:
+    - "Pre-commit sanity: db/seeds.rb Rails.env.development? branch preserves the 32 existing fixture rows for local dev loop; SMOKE_SEED branch adds the 2 external smoke sites (example.com + TEST-NET-1)"
+
+assumptions:
+  - "Rails 8's db:prepare on a fresh DB auto-runs db:seed (confirmed via Slice 6's first boot producing 32 unintended rows). If Rails changes this behavior, the seeds guard becomes dead code but doesn't cause regressions."
+  - "SES IAM policy's ses:FromAddress condition requires EXACT match — no wildcards. So DORM_GUARD_MAIL_FROM must be a single verified address, not a domain."
+
+specifications:
+  - "db/seeds.rb has exactly two guards: Rails.env.development? (dev fixtures) and ENV['SMOKE_SEED'] (smoke sites). Production with no env override creates zero rows. This contract is test-covered by spec/db/seeds_spec.rb."
+  - "No loopback, localhost, or RFC 1918 private ranges in any seeded site.url — enforced by a text-level assertion on the seed file, not just convention."
+  - "DORM_GUARD_MAIL_FROM in deploy.yml:env.clear MUST match the SES IAM policy's ses:FromAddress condition. A drift here silently breaks mail delivery without raising (raise_delivery_errors=false)."
+
+deviations_from_plan: >
+  The user explicitly requested "all part of slice 7" — bundling three distinct findings (seeds, Lookbook, MAIL_FROM) into one code commit. This is a deliberate relaxation of the one-failure-domain-per-slice rule, authorized in the conversation. Each finding is still isolable in git diff at file level, so debugging is still tractable.
+
+trade_offs: >
+  Bundling three findings in one commit makes the commit message
+  longer and the failure attribution fuzzier. Alternative was three
+  separate commits (7a/7b/7c) which would have been cleaner per the
+  one-failure-domain rule but added ceremony for fixes that are
+  all same-shape (Slice 6 verification revealed them, Slice 7
+  addresses them). User's call.
+
+self_review:
+  consistency: "All three fixes follow the 'gate on env' pattern used elsewhere in the codebase. The seeds guard matches the SMOKE_SEED pattern from the original Slice 7 plan."
+  metz: "All files under their respective limits. config/deploy.yml grew by 6 lines of comments + 1 value change. seeds.rb grew by ~25 lines of guarded content. view_component.rb gained a single if-block."
+  dead_code: "None — the dev-environment branch of seeds.rb is actively used in local development."
+
+confidence: high
+reviewer_attention:
+  - db/seeds.rb:19-45   # The two guards and the smoke site URLs. Verify 192.0.2.1 is TEST-NET-1 (RFC 5737) and the name strings match what the agent-note describes.
+  - config/deploy.yml:50-56   # The DORM_GUARD_MAIL_FROM value. If this drifts from the SES IAM policy's ses:FromAddress condition, every mailer send fails silently.
