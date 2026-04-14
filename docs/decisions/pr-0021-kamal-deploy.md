@@ -136,16 +136,47 @@ Rollback the image only if the broken state is tied to a code regression in the 
 
 ## Secrets required in CI (Slice 8)
 
-These are the GitHub repo secrets the Slice 8 deploy workflow will read. Listed here so the operator can provision them ahead of time:
+The `deploy` job in `.github/workflows/ci.yml` reads exactly these GitHub repo secrets. The operator must provision them via `gh secret set` (or the repo Settings → Secrets UI) before merging `feature/kamal-deploy` to `main` — otherwise the first post-merge push will trigger a deploy that fails at the first secret reference.
 
-- `DIGITALOCEAN_ACCESS_TOKEN` — DO API token for `doctl registry login` + droplet SSH (via the installed key)
-- `KAMAL_SSH_KEY` — private key whose public key is installed on the droplet (one of the SSH keys from Slice 6)
-- `KAMAL_REGISTRY_PASSWORD` — same DO API token as above; Kamal uses it as both username and password for DOCR
-- `RAILS_MASTER_KEY` — contents of `config/master.key`
-- `SMTP_USER_NAME` — SES IAM access key ID (or equivalent for other providers)
-- `SMTP_PASSWORD` — SES SMTP password derived from the IAM secret (not the raw IAM secret; see SES docs for the derivation)
-- `DORM_GUARD_ALERT_TO` — recipient for downtime alerts (must be a verified SES identity while the sandbox is in effect)
-- `DORM_GUARD_MAIL_FROM` — sender address on a verified SES identity (same address as ALERT_TO is fine during sandbox)
+| Secret | Source | Used for |
+| --- | --- | --- |
+| `DIGITALOCEAN_ACCESS_TOKEN` | DO control panel → API → generate token with `registry:read`, `registry:write`, `droplet:read` scopes | `doctl registry login` AND `KAMAL_REGISTRY_PASSWORD` env (DOCR uses the same token for username + password) |
+| `KAMAL_SSH_KEY` | A private SSH key whose public half is installed on the droplet (via `doctl compute ssh-key list`) | The webfactory/ssh-agent step loads this into the runner's `ssh-agent` so Kamal's SSH client can auth to the droplet. **Do NOT reuse a personal device key** — generate a dedicated CI key and install only that on the droplet. |
+| `RAILS_MASTER_KEY` | `cat config/master.key` on the operator's laptop | Written to `config/master.key` on the runner so `.kamal/secrets` finds it via the same `cat config/master.key` code path the laptop uses. Keeps CI symmetric with the local flow. |
+| `SMTP_USER_NAME` | The SES IAM access key ID for the `dorm-guard-ses-smtp` user (AKIA…) | `action_mailer.smtp_settings[:user_name]` — same value used by the laptop's `.env` |
+| `SMTP_PASSWORD` | The SES SMTP password derived from the IAM secret (NOT the raw IAM secret — see [the SES derivation docs](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html)). The Slice 6 commit's agent-note has the Python snippet that derives it. | `action_mailer.smtp_settings[:password]` |
+| `DORM_GUARD_ALERT_TO` | The verified recipient email (currently `tommy.caruso2118@gmail.com`) | `DowntimeAlertMailer.to` via environment |
+
+**Not needed in CI secrets** (all in `config/deploy.yml:env.clear`):
+
+- `DORM_GUARD_HOST` — hardcoded `dorm-guard.com`
+- `DORM_GUARD_MAIL_FROM` — hardcoded `tommy.caruso2118@gmail.com` (must match the IAM policy's `ses:FromAddress` condition)
+- `SMTP_ADDRESS` — hardcoded `email-smtp.us-east-1.amazonaws.com`
+- `SMTP_PORT` — hardcoded `"2587"` (port 587 is blocked by DO — see Slice 7's `b48e0e5` commit)
+- `WEB_CONCURRENCY` — pinned `1` (any value > 1 would trigger the `config/puma.rb` boot guard)
+- `SOLID_QUEUE_IN_PUMA` — hardcoded `true`
+
+### Provisioning commands
+
+Run these on the operator's laptop (the `gh` CLI must be authenticated against `tommy2118/dorm-guard`):
+
+```sh
+gh secret set DIGITALOCEAN_ACCESS_TOKEN --body "$(sed -n 's/^access-token: //p' ~/Library/Application\ Support/doctl/config.yaml | head -1)"
+gh secret set RAILS_MASTER_KEY --body "$(cat config/master.key)"
+# Read the remaining values from local .env — be careful in shell history
+gh secret set SMTP_USER_NAME --body "$(awk -F= '$1 == "SMTP_USER_NAME" { gsub(/^"|"$/, "", $2); print $2 }' .env)"
+gh secret set SMTP_PASSWORD --body "$(awk -F= '$1 == "SMTP_PASSWORD" { gsub(/^"|"$/, "", $2); print $2 }' .env)"
+gh secret set DORM_GUARD_ALERT_TO --body "$(awk -F= '$1 == "DORM_GUARD_ALERT_TO" { gsub(/^"|"$/, "", $2); print $2 }' .env)"
+# KAMAL_SSH_KEY needs a dedicated CI key — generate it fresh:
+ssh-keygen -t ed25519 -N "" -C "dorm-guard-ci" -f /tmp/dorm-guard-ci-key
+doctl compute ssh-key create dorm-guard-ci-deploy --public-key "$(cat /tmp/dorm-guard-ci-key.pub)"
+# Append the public key to the droplet's authorized_keys (doctl can't
+# add SSH keys to existing droplets — it's a droplet-creation-time
+# setting — so this happens over SSH):
+ssh root@104.236.125.236 "echo '$(cat /tmp/dorm-guard-ci-key.pub)' >> /root/.ssh/authorized_keys"
+gh secret set KAMAL_SSH_KEY < /tmp/dorm-guard-ci-key
+rm /tmp/dorm-guard-ci-key /tmp/dorm-guard-ci-key.pub
+```
 
 ## Constraints that must not drift
 
