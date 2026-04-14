@@ -1,0 +1,126 @@
+intent: >
+  Pin the end-to-end wiring for all four new check types with a network-free
+  smoke gate that exercises form → model → dispatcher → job → index badge
+  across one happy and one sad path per type.
+
+slice: 7/10
+kind: test
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared:
+    - spec/system/check_types_smoke_spec.rb
+  actual:
+    - spec/system/check_types_smoke_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/system/check_types_smoke_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "Each check_type (http/ssl/tcp/dns/content_match) posts through the real SitesController#create, exercising strong_params, the form component, model validations, and clear_irrelevant_config"
+    - "PerformCheckJob.perform_now is invoked with the created Site id and asserted to flip status on happy-then-sad stubbed outcomes"
+    - "GET /sites renders the status badge via StatusBadgeComponent — the integration proves the render path end-to-end, not just the component in isolation"
+    - "Rejected-input path: tcp site posted without tcp_port re-renders new with 422 and the expected field label"
+  manual: []
+
+assumptions:
+  - "Rails 8 response status codes use :unprocessable_content (not :unprocessable_entity) in the re-render path from sites_controller; this matches the existing render :new, status: :unprocessable_content calls"
+  - "StatusBadgeComponent's DaisyUI classes (badge-success, badge-error, badge-ghost) are stable and not renamed by a later slice"
+  - "The badge CSS class is a load-bearing substring in the rendered HTML — a refactor to a different badge system would need to update this spec"
+
+specifications:
+  - "Smoke spec covers 5 happy-sad arcs (one per check_type) plus one rejected-input case — minimum-viable integration coverage for the epic"
+  - "All checker service class methods (HttpChecker.check, SslChecker.check, TcpChecker.check, DnsChecker.check, ContentMatchChecker.check) are stubbed at the class level — this spec is network-free per the plan's locked rule"
+  - "Shared example 'a check type end-to-end' is parameterized by check_type, create_params, checker_class, and an optional happy_outcome override for content-match's metadata-driven success"
+  - "Rejected-input example asserts 422 status and the expected field label ('TCP port') in the re-rendered body"
+
+deviations_from_plan: >
+  Plan listed the file as spec/system/check_types_smoke_spec.rb and implied
+  a Capybara system-test style. This implementation uses type: :request
+  rather than :system because the project does not yet have Capybara or
+  browser drivers configured, and because request-level coverage is
+  sufficient for wiring-level integration testing (no JS interactions to
+  exercise). File location preserved to match the plan's scope declaration.
+
+trade_offs: >
+  Used a shared_examples block rather than a one-example-per-type parameterized
+  loop. Cost: slightly more indirection in the spec structure. Benefit: each
+  check_type gets its own describe block with a meaningful name, and the arc
+  under test reads as a single coherent flow — easier to debug when one type
+  breaks.
+
+  Stubbed checker services at the class-method level rather than at the
+  adapter level (Faraday, Socket, Resolv). Cost: the smoke spec does not
+  exercise the checker → adapter wiring; that's already covered by the
+  per-checker specs. Benefit: the smoke stays fast and deterministic and
+  tests only the integration seams the individual specs cannot cover.
+
+  Used include_examples rather than it_behaves_like so each check_type's
+  "creates via form, flips to up on success, and flips to down on failure"
+  example runs with a unique describe label. it_behaves_like would have
+  produced a nested group that renamed the examples awkwardly.
+
+interfaces:
+  consumed:
+    - "HttpChecker.check(url) -> CheckOutcome"
+    - "SslChecker.check(host:, port:) -> CheckOutcome"
+    - "TcpChecker.check(host:, port:) -> CheckOutcome"
+    - "DnsChecker.check(hostname:) -> CheckOutcome"
+    - "ContentMatchChecker.check(url:, pattern:) -> CheckOutcome"
+    - "CheckDispatcher.call(site) -> CheckOutcome | raises CheckDispatcher::UnknownCheckType"
+    - "PerformCheckJob.perform_now(site_id)"
+    - "SitesController#create (POST /sites) -> redirect on success, 422 render on failure"
+    - "StatusBadgeComponent renders DaisyUI badge-success/badge-error/badge-ghost classes"
+  published: []
+
+self_review:
+  tests: >
+    Smoke spec is 163 lines with 6 examples (5 check-type arcs + 1 rejected-input
+    case). Covers the integration seams the unit specs cannot: controller
+    strong_params routing through clear_irrelevant_config, the form component
+    rendering per check_type, CheckDispatcher's case-statement wiring, the job's
+    derive_status for the new metadata shapes, and the index view's badge render.
+  consistency: >
+    Uses sign_in_as from AuthHelpers (matches existing request specs including
+    sites_spec and authentication_spec). Stub pattern (allow(ClassName).to
+    receive(:check).and_return(outcome)) matches the existing perform_check_job_spec
+    style. CheckOutcome construction matches the canonical fields contract.
+  metz: >
+    Measured. check_types_smoke_spec.rb is 163 lines; shared_examples block
+    is 30 lines including two hashes; each describe block is 10-17 lines
+    declaring one include_examples call with explicit params. No method
+    violations (spec files don't have the class/method rule).
+  mocking: >
+    Mocks five owned service classes — HttpChecker, SslChecker, TcpChecker,
+    DnsChecker, ContentMatchChecker. All internal code. No stdlib stubbing
+    beyond the AuthHelpers post to session_path.
+  error_paths: >
+    The sad-path branch of each shared example covers the failing CheckOutcome
+    flow end-to-end. The rejected-input case covers the form validation
+    failure path. No rescue clauses in the spec itself — if a stub fails or
+    a call raises, the spec fails loudly.
+  dead_code: >
+    None. The happy_outcome override param is used only by the :content_match
+    describe block for the metadata-driven success shape; if content-match
+    ever doesn't need a custom success outcome, the param can be removed.
+
+confidence: high
+reviewer_attention:
+  - "spec/system/check_types_smoke_spec.rb:45-67"  # the shared_examples arc — this is the contract pin
+  - "spec/system/check_types_smoke_spec.rb:146-163"  # rejected-input path — tests the 422 re-render flow the happy paths skip
