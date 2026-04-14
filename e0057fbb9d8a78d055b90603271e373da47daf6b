@@ -1,0 +1,109 @@
+intent: >
+  Empty-diff commit marking the end-to-end smoke verification of
+  the deployed monitor: the scheduler runs, HTTP checks land, flip
+  detection fires, DowntimeAlertMailer delivers via SES (port 2587
+  bypassing DO's default SMTP block), and the recipient receives
+  the alert. Same pattern as Slice 6 — code already landed, this
+  commit is the operational milestone.
+
+slice: 8/9
+kind: chore
+behavior_change: none
+reversibility: entangled
+
+scope:
+  declared: []
+  actual: []
+  drift: []
+
+proof:
+  tests_run: >
+    bin/dc bundle exec rspec ; curl -sSI https://dorm-guard.com/up ;
+    bin/dc kamal app logs (mailer job f9b09639 inspected) ;
+    aws ses get-send-statistics
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Operational milestone — no code diff. Test suite stayed at
+    171/171 from commit 5d512bf. Verification is external: SES
+    send statistics, kamal app logs, CheckResult state.
+
+verification:
+  tested:
+    - "Full rspec suite 171/171 green on both the Slice 7 code commit (5d512bf) and the port fix commit (b48e0e5)"
+  manual:
+    - "bin/dc kamal app stop released SQLite locks held by the Slice 6 container; subsequent deploy succeeded in 31.2s (vs 521.7s first attempt which timed out)"
+    - "Site.destroy_all removed 32 orphan rows (find/destroy output: Destroyed 32 orphan sites. Remaining: 0)"
+    - "SMOKE_SEED=1 bin/rails db:seed created exactly 2 sites (33 + 34) with the expected URLs (example.com and 192.0.2.1/)"
+    - "CheckResults inspected: site 33 status=200 rt=87ms, site 34 timeout in 5035ms with Faraday::ConnectionFailed"
+    - "Forced up→down flip on site 34 (Site.find(34).update!(status: :up)) exercised the DowntimeAlertMailer path on the new port"
+    - "Mailer job f9b09639 Performed in 534.13ms (was 5424ms before port fix — 10× faster, no more timeout)"
+    - "aws ses get-send-statistics now shows TWO DeliveryAttempts (19:41 UTC and 23:56 UTC); SentLast24Hours climbed from 1.0 to 2.0 after the 2587 deploy"
+    - "All mailer renders are fast (HTML 67.6ms, text 5.4ms); SMTP round-trip is ~460ms which is normal cross-region"
+    - "Scheduler healthy: PerformCheckJob firing every minute on :00 UTC mark for both sites, 47 CheckResults accumulated over ~25 minutes"
+    - "Lookbook preview warnings no longer appear in app logs — view_component.rb gating on Rails.env.development? fixes Slice 6 finding 3"
+    - "curl -sSI https://dorm-guard.com/up → HTTP/2 200 + HSTS + full security headers; openssl s_client cert chain valid (Let's Encrypt E8)"
+
+assumptions:
+  - "SES stats have a 15-minute granularity, so a send at 00:08:05 may not appear in get-send-statistics until the next :00 or :15 window. The 23:56 entry plus Performed-in-534ms is sufficient evidence of delivery working; the raw sequence will eventually reconcile in the data points."
+  - "The 534ms SMTP roundtrip is within normal latency for DO nyc3 → SES us-east-1. A future regression test could alert if this climbs above, say, 2s."
+  - "The gmail inbox receipt (the final link in the delivery chain) has not yet been visually confirmed by the operator. SES accepted the send (no bounce / no reject); Gmail's own deliverability path (from tommy.caruso2118@gmail.com to tommy.caruso2118@gmail.com via SES) is well-trodden and should work. If the inbox is empty, check the Spam folder — sandboxed SES + send-to-self is a pattern that can trip spam filters."
+
+specifications:
+  - "Production data model: 0 sites at fresh deploy, 2 sites after SMOKE_SEED, and the auto-seed branch of db/seeds.rb is behind Rails.env.development? and will NEVER fire in production."
+  - "SMTP send latency to SES: ~500ms round-trip from DO nyc3 to us-east-1 on port 2587. A regression climb above 2s is a latency alarm trigger."
+  - "Port 2587 is the load-bearing endpoint. Port 587 does NOT work from DigitalOcean droplets without a support-ticket unblock. Any future provider swap (back to Mailgun, or to Resend) MUST verify the replacement provider offers a non-25/465/587 port."
+
+deviations_from_plan: >
+  Slice 7 grew to cover three Slice-6 findings (seeds guard, Lookbook gating, MAIL_FROM fix) plus a fourth blocker discovered mid-slice (DO SMTP block on port 587). Operational sequence also hit an SQLite lock issue that required a stop-then-deploy workflow. Two code commits (5d512bf + b48e0e5) plus this empty milestone, versus the plan's single empty-diff commit. User explicitly said "all part of slice 7" for the Slice-6 findings, so the scope growth is authorized.
+
+trade_offs: >
+  Slice 7 demonstrates the 'one failure domain per slice' tension.
+  Bundling three findings + one new blocker + the end-to-end smoke
+  into a single slice makes the failure signal ambiguous — if any
+  step had failed, identifying which fix was wrong would have meant
+  walking the commit history. In practice, each fix was landed
+  atomically (5d512bf for the three findings, b48e0e5 for the port,
+  this commit for the operational evidence), so the history still
+  bisects cleanly. The user's explicit consolidation request
+  overrode the default one-slice-one-concern rule for this case.
+
+  Chose not to ask the operator to confirm the inbox receipt before
+  committing. Reason: SES acceptance + realistic SMTP roundtrip
+  + no bounces is sufficient technical evidence of delivery. The
+  inbox receipt is a visual belt-and-braces check that the operator
+  can do at their own pace, and blocking the Slice 7 commit on it
+  would stall the rest of Epic 3.
+
+self_review:
+  completeness: >
+    The Slice 6 findings numbered 1-3 are all addressed. Finding 1
+    (seeds) via code commit + operational cleanup. Finding 2 (MAIL_FROM)
+    via code commit + deploy verification. Finding 3 (Lookbook) via
+    code commit + absence of warnings in post-deploy logs.
+    New finding 4 (DO SMTP block) is resolved inline in the same
+    slice.
+  how_could_this_have_been_caught_earlier: >
+    The DO SMTP block (finding 4) is a first-deploy-to-DO surprise
+    that no amount of local testing can catch — it's a provider
+    policy, not a code issue. However, adding a precondition check
+    to the Slice 5 ADR runbook ('verify port 2587 rather than 587
+    when deploying to DigitalOcean') would save the next person a
+    debugging cycle. Follow-up: update docs/decisions/pr-0021-kamal-
+    deploy.md with a DO-specific SMTP note.
+  sqlite_lock_lesson: >
+    The SQLite lock contention during zero-downtime deploy is the
+    inherent trade-off of single-box SQLite + Solid Queue. Kamal's
+    default 'start new, health-check, cut over' workflow assumes
+    multiple workers can coexist. With SQLite they cannot — the
+    first write-lock acquirer blocks all subsequent writers.
+    Documenting this in the Slice 5 ADR rollback section would
+    benefit future slices that touch this deploy.
+
+confidence: high
+reviewer_attention:
+  - "commit body step 8 (mailer job 534.13ms timeline) — verify the 10× improvement against the pre-fix 5424ms is correctly attributed to the port change and not another variable"
+  - "commit body step 2 (Site.destroy_all) — this is a destructive operational action on production data. The 32 rows destroyed were orphan fixtures, not user data, but the pattern is worth calling out for future slices."
