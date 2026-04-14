@@ -1,0 +1,168 @@
+intent: >
+  Introduce check_type enum + CheckDispatcher so all checker calls flow
+  through one thin routing boundary, with loud failure on unknown types
+  and scaffolded seams for later per-type config scrubbing.
+
+slice: 2/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - db/migrate/20260414171235_add_check_type_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/jobs/perform_check_job.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+  actual:
+    - db/migrate/20260414171235_add_check_type_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/jobs/perform_check_job.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "SQLite backfills existing sites rows to check_type=0 (:http) on add_column with default and null:false"
+  - "Rails 8 integer-backed enums reject writes of out-of-range integers at the model layer (no raw 99 can be stored)"
+  - "RSpec instance_double(Site, check_type: 'phantom') is a valid stand-in for the UnknownCheckType spec; it bypasses ActiveRecord's enum validation which would otherwise block a phantom type"
+
+specifications:
+  - "Site.check_type is an integer-backed enum with keys http/ssl/tcp/dns/content_match and default :http"
+  - "CheckDispatcher.call(site) raises CheckDispatcher::UnknownCheckType for any check_type not explicitly routed — no silent fallback to HTTP"
+  - "CheckDispatcher's public singleton surface is exactly .call; any additional public method is a structural-spec failure"
+  - "CheckDispatcher exposes exactly one public constant: UnknownCheckType"
+  - "UnknownCheckType bubbles out of PerformCheckJob#perform rather than being rescued into an error CheckResult, so Solid Queue's failed-job handling surfaces it operationally"
+  - "Site.healthy? := up? (3-state meaning; Slice 9's :degraded is deliberately NOT healthy)"
+  - "Site.failing? := down? (3-state meaning; Slice 9's :degraded is deliberately NOT failing)"
+  - "before_validation :clear_irrelevant_config is wired on Site; the method body is intentionally empty in this slice and extended per-column by Slices 3-6 and 10"
+
+deviations_from_plan: none
+
+trade_offs: >
+  Kept CheckDispatcher's public surface structurally pinned by a spec rather
+  than only documented in a code comment. Cost: one extra spec file that turns
+  red if the dispatcher ever grows a helper. Benefit: the dispatcher-discipline
+  rule from the plan is enforced at CI time, not at code-review-discipline time,
+  which is where drift always starts.
+
+  Kept clear_irrelevant_config as an empty method + live callback rather than
+  adding the callback lazily in Slice 3. Cost: one slice ships a no-op method
+  with a single-line test that verifies wiring. Benefit: Slices 3-6 and 10 each
+  add one field-scrubbing line without touching the callback-registration line,
+  so the "add a column" diff stays small and obvious.
+
+  UnknownCheckType is NOT rescued in PerformCheckJob. Cost: a bad deploy that
+  ships a schema change without a matching dispatcher branch will fail loudly
+  at job run time. Benefit: the failure is operationally visible (Solid Queue
+  failed-job log) instead of silently recording ghost :down check results with
+  a "CheckDispatcher has no route" error_message. Loud failure is the whole
+  point of the exception class.
+
+interfaces:
+  consumed:
+    - "HttpChecker.check(url) -> CheckOutcome"
+  published:
+    - "Site#check_type -> String"
+    - "Site#check_type= (enum writer)"
+    - "Site#http? -> Boolean (and the four sibling predicates)"
+    - "Site#healthy? -> Boolean"
+    - "Site#failing? -> Boolean"
+    - "CheckDispatcher.call(site) -> CheckOutcome | raises CheckDispatcher::UnknownCheckType"
+    - "CheckDispatcher::UnknownCheckType < StandardError"
+
+self_review:
+  tests: >
+    Added spec/services/check_dispatcher_spec.rb with 6 examples: .call dispatches
+    :http to HttpChecker, .call raises UnknownCheckType on phantom types, .call
+    does not fall back to HttpChecker on phantom types, and three structural
+    assertions pinning the public surface (one singleton method, one constant,
+    no public instance methods). Extended spec/models/site_spec.rb with the
+    check_type enum block (default, all five types, predicate sanity), the health
+    predicate block (healthy? when up, failing? when down, neither when unknown),
+    and a callback-wiring spec that pins the before_validation registration.
+    Updated spec/jobs/perform_check_job_spec.rb to stub CheckDispatcher.call(site)
+    instead of HttpChecker.check(site.url) at five stub sites.
+  consistency: >
+    CheckDispatcher.call(site) mirrors HttpChecker.check(url)'s singleton-method
+    entrypoint pattern. The enum declaration syntax on Site matches the existing
+    status enum line directly above it. The before_validation callback placement
+    matches Rails convention (callbacks before validations in the class body).
+  metz: >
+    Measured. site.rb grew from 20 lines to 42 — 42 is under Metz's 100-line
+    class limit. The new methods: healthy? 3 body lines, failing? 3 body lines,
+    clear_irrelevant_config 2 body lines (1 is a comment placeholder, 1 blank
+    — effectively an empty method body). check_dispatcher.rb is 23 lines total,
+    1 public singleton method (call) at 6 body lines including the raise, 1
+    nested exception class with a 3-line initialize. perform_check_job.rb
+    perform unchanged shape (still 6 body lines).
+  duplication: >
+    HttpChecker.check(site.url) remains the only HTTP dispatch path; the job
+    no longer calls it directly. No new copies of the enum values — the keys
+    live in one place on Site.
+  mocking: >
+    check_dispatcher_spec uses instance_double(Site, ...) for the phantom-type
+    case — owned internal code, instance_double verifies method existence so
+    the test stays honest if Site's API changes. The :http happy-path test
+    uses a real Site.create! and mocks HttpChecker.check (owned internal code).
+    perform_check_job_spec mocks CheckDispatcher.call — owned internal code.
+  error_paths: >
+    UnknownCheckType is the one new error path this slice introduces. It is
+    deliberately NOT rescued in PerformCheckJob#perform; the exception bubbles
+    to Solid Queue's retry and failed-job handling. Two dispatcher specs pin
+    this: one asserts the raise, one asserts HttpChecker is NOT called as a
+    fallback. A third job spec assertion is deferred to a later slice where
+    PerformCheckJob gets more rescue logic around :degraded — for Slice 2 the
+    existing job specs all pass because they only exercise :http sites, which
+    route cleanly.
+  security: >
+    No new security boundary touched. CheckDispatcher is a routing class with
+    no user-data paths; Site.check_type writes go through ActiveRecord enum
+    which rejects out-of-range writes at the model layer. Strong-params on
+    sites_controller does not yet permit check_type (Slice 3 adds that with
+    SSL); for Slice 2, sites can only be created/updated as :http through the
+    UI, which is backward compatible with Epic 2.
+  api: >
+    Additive: Site#check_type, Site#check_type=, Site#healthy?, Site#failing?
+    are all new; existing callers are unaffected. CheckDispatcher.call is a
+    new published surface. PerformCheckJob's internal call site changed from
+    HttpChecker.check to CheckDispatcher.call — not a public API change, all
+    call-site specs updated in the same commit.
+  dead_code: >
+    clear_irrelevant_config has an empty body with a placeholder comment. Not
+    dead code — the method exists as a deliberate callback seam for later
+    slices, the wiring is tested, and the comment tells future readers why
+    it looks empty. Removing it would force Slices 3-6 to add both the
+    callback registration and the field-scrubbing line in the same diff,
+    mixing two concerns.
+
+confidence: high
+reviewer_attention:
+  - "app/services/check_dispatcher.rb:19-25"  # the case statement — one branch per check_type, else raises, no defaults
+  - "app/models/site.rb:5"  # enum keys/values/default — integer stability matters when Slice 9 adds :degraded at 4
+  - "spec/services/check_dispatcher_spec.rb:46-58"  # structural surface assertions — the dispatcher-discipline canary
