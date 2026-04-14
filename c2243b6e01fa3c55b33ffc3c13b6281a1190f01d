@@ -1,0 +1,222 @@
+intent: >
+  Land the first alternative check type (SSL cert expiry) so the dispatcher
+  routes end-to-end and the IpGuard-reuse pattern is proven for non-Faraday
+  sockets.
+
+slice: 3/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - app/services/ssl_checker.rb
+    - db/migrate/20260414195125_add_tls_port_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/jobs/perform_check_job.rb
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/controllers/sites_controller.rb
+    - spec/services/ssl_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  actual:
+    - app/services/ssl_checker.rb
+    - db/migrate/20260414195125_add_tls_port_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/controllers/sites_controller.rb
+    - app/jobs/perform_check_job.rb
+    - spec/services/ssl_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+    - spec/components/site_form_component_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/ssl_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "OpenSSL::X509::Certificate objects built without signing or serialization are sufficient for SslChecker spec stubs (peer_cert.not_after and peer_cert.subject.to_s both work on a minimally-constructed instance)"
+  - "Socket.tcp(host, port, connect_timeout:) is the correct Ruby stdlib entrypoint for timeout-bounded TCP connect (Ruby >= 2.6)"
+  - "Timeout.timeout around OpenSSL::SSL::SSLSocket#connect may leak a file descriptor on async interrupt; the monitoring use case tolerates rare leaks and the ensure block closes sockets on the normal exit path"
+  - "OpenSSL::SSL::SSLSocket requires hostname= to be set for SNI before connect, and test stubs that do not allow this setter will fail"
+
+specifications:
+  - "SslChecker.check(host:, port:) is a class method taking primitives; the dispatcher extracts host from URI.parse(site.url).host and passes site.tls_port as port"
+  - "SSL cert classification (expired / <7 days / OK) lives in SslChecker, not PerformCheckJob — the documented ownership exception from decision 3 because the signal is temporal"
+  - "SSL success returns CheckOutcome with error_message: nil, status_code: nil, body: nil, metadata: { cert_not_after:, cert_subject:, days_until_expiry: }"
+  - "SSL failure (expired, expiring < 7 days, connection refused, handshake error, TLS error, handshake timeout, IpGuard block) returns error_message populated"
+  - "IpGuard.check!(host) runs BEFORE any socket open so a blocked host never gets a TCP connect — regression proof: the spec stubs IpGuard to raise and asserts Socket.tcp was never called"
+  - "PerformCheckJob#derive_status maps (error_message.nil? AND status_code.nil?) to :up for non-HTTP checks; HTTP retains its 200-399 check"
+  - "Site validates tls_port presence and numericality (1..65_535) only when check_type is :ssl"
+  - "Site#clear_irrelevant_config nulls tls_port on any non-:ssl save so stale config never hangs around after a check_type flip"
+  - "CheckDispatcher#call now routes :ssl in addition to :http; the structural spec from Slice 2 still asserts public surface is exactly .call + UnknownCheckType"
+
+deviations_from_plan: >
+  None. Plan-file Slice 3 scope list was updated in a separate plan edit
+  to include perform_check_job.rb, perform_check_job_spec.rb, and
+  site_form_component_spec.rb — all three were referenced in the slice
+  prose but missed from the file list. Plan bug fixed, no intent drift.
+
+trade_offs: >
+  Kept health classification for SSL (expired / <7 days / OK) inside SslChecker
+  rather than PerformCheckJob.derive_status. This is the documented
+  ownership asymmetry from decision 3 — SSL's signal is temporal and
+  splitting it into job logic would require leaking metadata internals
+  into the job. Cost: a Slice 10 reader needs to look in two places for
+  "where does :degraded come from" (job for HTTP, checker for SSL). Mitigation:
+  the plan's decision 3 text names this asymmetry explicitly and the
+  Slice 10 scope will add the emission paths in both places.
+
+  Used Timeout.timeout around OpenSSL::SSL::SSLSocket#connect for the
+  10-second handshake bound. Technically unsafe (async interrupt can
+  leak an FD), but the ensure block closes sockets on the normal exit
+  path and the monitoring use case tolerates rare FD leaks better than
+  it tolerates a stuck handshake hanging the job worker. The stdlib
+  alternative — non-blocking I/O plus IO.select — is much more code for
+  a check that runs on a 60s cadence.
+
+  Left tls_port at DEFAULT_TLS_PORT=443 in the form's value= attribute
+  rather than as a DB default. Cost: the form has to know about the
+  default. Benefit: clear_irrelevant_config can unconditionally null
+  the column for non-SSL sites without fighting a DB-level default,
+  and the non-SSL rows stay explicitly nil rather than carrying
+  leftover 443s.
+
+interfaces:
+  consumed:
+    - "IpGuard.check!(host_or_ip) -> true | raises IpGuard::BlockedIpError"
+    - "HttpChecker.check(url) -> CheckOutcome"
+    - "CheckOutcome.new(status_code:, response_time_ms:, error_message:, checked_at:, body:, metadata:) -> CheckOutcome"
+    - "Site#check_type -> String"
+    - "Site#tls_port -> Integer | nil"
+  published:
+    - "SslChecker.check(host:, port:) -> CheckOutcome"
+    - "CheckDispatcher.call(site) -> CheckOutcome | raises CheckDispatcher::UnknownCheckType"
+    - "Site#ssl? -> Boolean"
+    - "Site#tls_port= (integer writer)"
+    - "Site::DEFAULT_TLS_PORT -> 443"
+
+self_review:
+  tests: >
+    Added spec/services/ssl_checker_spec.rb with 8 cases (cert >7 days → up
+    with metadata, cert <7 days → down with error_message, expired cert →
+    down, IpGuard-blocked → down without opening a socket, connection refused
+    → down, TLS handshake error → down, handshake timeout → down, and subject
+    string round-trip). All cases stub Socket.tcp, OpenSSL::SSL::SSLSocket,
+    and IpGuard — network-free per the plan's locked rule. Added an :ssl
+    dispatch case to spec/services/check_dispatcher_spec.rb that asserts the
+    host/port translation from URI.parse. Extended spec/models/site_spec.rb
+    with tls_port validation and clear_irrelevant_config scrubbing. Added a
+    nil-status_code success case to spec/jobs/perform_check_job_spec.rb that
+    proves derive_status handles SSL-shaped results. Extended
+    spec/components/site_form_component_spec.rb with check_type select and
+    tls_port input assertions. Added a new_ssl_site preview variant.
+  consistency: >
+    SslChecker.check(host:, port:) mirrors HttpChecker.check(url) and the
+    dispatcher pattern from Slice 2 — class method entrypoint, single instance
+    method of the same name, private helpers below. The RECOVERABLE_ERRORS
+    freeze-list pattern matches how BLOCKED_RANGES is declared in IpGuard.
+    The form component gained fields inline rather than extracting per-type
+    partials — that extraction is the Slice 4 trigger per the plan's Notes
+    section, which explicitly said "at the first sign of branching on check_type
+    in more than one spot (which happens in Slice 4 when TCP joins SSL), extract
+    per-check-type partials IMMEDIATELY."
+  metz: >
+    Measured. ssl_checker.rb is 92 lines, 10 methods. check is 4 body lines
+    plus a rescue clause; with_tls_socket is 5 body lines plus an ensure;
+    classify is 2 body lines; days_until_expiry 1; cert_metadata 5 (single
+    hash expression); cert_error 2; build_outcome 8 (single CheckOutcome.new
+    expression); error_outcome 1; elapsed_ms 1. No method is flagrantly over
+    the 5-line rule in statement count — the physically-longer methods are
+    single expressions whose line count comes from multi-line hash or
+    CheckOutcome construction. site.rb grew from 42 lines to 50 lines.
+    check_dispatcher.rb grew from 23 to 27 lines (one new case branch).
+    site_form_component.html.erb grew from 40 to 60 lines; Slice 4 will
+    extract partials when TCP adds the second conditional field.
+  duplication: >
+    build_outcome in SslChecker deliberately parallels success_outcome in
+    HttpChecker but is not shared — each checker will diverge in which
+    fields it populates (content-match will add body, SSL populates
+    metadata, etc.). Extracting a shared CheckOutcome factory now would
+    be premature abstraction; Slice 6 will revisit if ContentMatchChecker
+    needs something similar. The form error-display ERB block is duplicated
+    across four field blocks — same as it was pre-Slice 3, will be addressed
+    when Slice 4 extracts per-type partials.
+  mocking: >
+    Mocks all network boundaries: Socket.tcp, OpenSSL::SSL::SSLSocket,
+    IpGuard.check!, and ssl_socket.peer_cert. Per the plan's rule, non-Faraday
+    checker specs must stub external boundaries; the alternative (real TLS
+    handshakes against localhost or a test server) makes specs flaky and
+    slow. OpenSSL::X509::Certificate objects are constructed directly rather
+    than mocked because they're owned stdlib types and the fake_cert helper
+    sets only the fields the checker reads.
+  error_paths: >
+    RECOVERABLE_ERRORS enumerates eight exception classes. Each has an
+    explicit spec case except Errno::EHOSTUNREACH and Errno::ENETUNREACH
+    which are covered by the same code path as ECONNREFUSED (the rescue
+    block treats all Errno descendants identically). Timeout::Error covers
+    both the connect timeout (propagated from Socket.tcp) and the handshake
+    timeout (from Timeout.timeout around ssl.connect). IpGuard::BlockedIpError
+    has a dedicated spec case that also asserts Socket.tcp is never called.
+  security: >
+    IpGuard.check!(host) runs before the socket open, which is the correct
+    order — the non-Faraday path now reuses the same range logic as the
+    Faraday path. The DNS resolution happens inside IpGuard; SslChecker
+    never looks up the host itself. The socket ensure block closes both
+    TCP and SSL sockets on all paths including Timeout::Error, so no
+    FD leaks on the normal control flow. Async interrupts during
+    Timeout.timeout remain a known theoretical risk, documented in the
+    class comment and the agent-note trade_offs.
+  api: >
+    Additive. SslChecker is a new published entrypoint. CheckDispatcher.call
+    gains a new branch but the signature is unchanged. Site#tls_port and
+    Site#ssl? are new. Site::DEFAULT_TLS_PORT is a new public constant.
+    PerformCheckJob#derive_status is private; its new branch is internal.
+    Backward compat: all existing Site records are check_type=:http after
+    the Slice 2 migration and continue to work unchanged in this slice.
+  performance: >
+    SslChecker.check opens one TCP + one TLS socket per invocation with
+    bounded timeouts (5s + 10s worst case). No caching, no pooling — a
+    cert check on a 60s cadence is cheap enough that sharing sockets
+    isn't worth the complexity. IpGuard.check! does at most one
+    Resolv.getaddresses call, no new DNS traffic versus the HTTP path.
+  dead_code: >
+    None. The DEFAULT_TLS_PORT constant is referenced by the form component.
+    RECOVERABLE_ERRORS is used in the rescue clause. All declared methods
+    are called.
+
+confidence: high
+reviewer_attention:
+  - "app/services/ssl_checker.rb:46-52"  # with_tls_socket — the Timeout+ensure dance is the riskiest code in this slice
+  - "app/services/ssl_checker.rb:70-75"  # cert_error — 7-day critical floor is Slice 3's temporary threshold; Slice 10 changes it
+  - "app/jobs/perform_check_job.rb:40-42"  # derive_status nil-status_code branch — subtle, easy to regress
