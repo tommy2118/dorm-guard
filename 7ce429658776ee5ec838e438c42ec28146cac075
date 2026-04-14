@@ -1,0 +1,83 @@
+intent: >
+  Prove the auth boundary: /up remains accessible without login, all Site
+  routes redirect unauthenticated requests, and extract sign_in_as to a
+  shared support module so request specs don't carry duplicated inline helpers.
+
+slice: 2/4
+kind: test
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared:
+    - spec/support/auth_helpers.rb
+    - spec/rails_helper.rb
+    - spec/requests/sites_spec.rb
+    - spec/requests/authentication_spec.rb
+  actual:
+    - spec/support/auth_helpers.rb
+    - spec/rails_helper.rb
+    - spec/requests/sites_spec.rb
+    - spec/requests/authentication_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+8 examples"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/requests/authentication_spec.rb
+    - spec/support/auth_helpers.rb
+  rationale: >
+    authentication_spec.rb is the contract spec for the auth boundary.
+    auth_helpers.rb is a support module, not a spec file, but its sign_in_as
+    method is exercised by every request spec that calls it.
+
+assumptions:
+  - "/up is exempt because Rails::HealthController does not inherit ApplicationController — verified via boundary spec (GET /up returns 200 without login)"
+  - "session_path route helper is available in the AuthHelpers module when included into request spec examples"
+
+specifications:
+  - "GET /up returns 200 without authentication (Kamal health probe must never be blocked)"
+  - "GET /session/new is accessible without authentication (login page must be reachable)"
+  - "All other application routes redirect unauthenticated requests to new_session_path"
+  - "After login, Rails redirects to the originally requested URL (session[:return_to_after_authenticating])"
+  - "DELETE /session destroys the session cookie; subsequent requests are unauthenticated"
+
+deviations_from_plan: >
+  Plan implied a HealthController investigation before deciding the /up exemption
+  mechanism. Approach changed: used the boundary spec itself as the proof
+  (GET /up returns 200 without login). No path-string branching added anywhere —
+  exemption holds by class inheritance, not configuration.
+
+trade_offs: >
+  Authenticating through the real session endpoint in sign_in_as (POST /session)
+  rather than stubbing session state. Cost: one extra POST per request spec example.
+  Benefit: tests the real auth path — a stub would miss misconfigured cookie settings
+  or rate-limit interactions. The cost is negligible at 34 request specs.
+
+interfaces:
+  consumed:
+    - "Authentication#require_authentication -> redirect | nil (from Slice 1)"
+    - "Authentication#allow_unauthenticated_access(**options) (from Slice 1)"
+    - "SessionsController#create(email_address:, password:) -> session cookie (from Slice 1)"
+  published:
+    - "AuthHelpers#sign_in_as(user, password: String) -> void"
+
+self_review:
+  consistency: >
+    sign_in_as signature (keyword arg with default) matches the boundary spec usage.
+    Pattern mirrors how other Rails projects wire request spec auth helpers.
+  metz: "auth_helpers.rb: 1 public method, 3 lines. authentication_spec.rb: 8 examples, no class."
+  security: >
+    sign_in_as uses a hardcoded test password string — correct for test env.
+    Boundary spec proves /up bypasses auth without any config change.
+
+confidence: high
+reviewer_attention:
+  - "spec/support/auth_helpers.rb:10-12 — sign_in_as posts to real session endpoint; confirm this is the correct controller action name after Slice 1 routing"
