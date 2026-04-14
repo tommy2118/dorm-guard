@@ -1,62 +1,100 @@
 # Name of your application. Used to uniquely configure containers.
 service: dorm_guard
 
-# Name of the container image (use your-user/app-name on external registries).
+# Name of the container image. With a provider-native registry the
+# `image` is just the short name; the registry.server value prefixes it.
 image: dorm_guard
 
 # Deploy to these servers.
+#
+# Public IPv4 of the `dorm-guard` droplet in nyc3 (s-1vcpu-1gb,
+# ubuntu-24-04-x64). Substituted from the REPLACE-DROPLET-IP
+# placeholder in Slice 6. If the droplet is destroyed and recreated
+# this IP will change — rotate here and in Route 53 together.
 servers:
   web:
-    - 192.168.0.1
+    - 104.236.125.236
   # job:
   #   hosts:
-  #     - 192.168.0.1
+  #     - 104.236.125.236
   #   cmd: bin/jobs
 
-# Enable SSL auto certification via Let's Encrypt and allow for multiple apps on a single web server.
-# If used with Cloudflare, set encryption mode in SSL/TLS setting to "Full" to enable CF-to-app encryption.
-#
-# Using an SSL proxy like this requires turning on config.assume_ssl and config.force_ssl in production.rb!
-#
-# Don't use this when deploying to multiple web servers (then you have to terminate SSL at your load balancer).
-#
-# proxy:
-#   ssl: true
-#   host: app.example.com
+# Kamal's Thruster proxy terminates TLS via Let's Encrypt for the
+# single public hostname. Matches `config.hosts` in production.rb —
+# both sides must agree or the cert issuance or host allowlist fails.
+# (The shared source of truth per-environment is the DORM_GUARD_HOST
+# ENV var that production.rb reads; this YAML value is the Kamal-time
+# host, which is static per deploy and does not read from ENV.)
+proxy:
+  ssl: true
+  host: dorm-guard.com
 
 # Where you keep your container images.
+#
+# Reusing the existing `nightloom` DOCR namespace — DigitalOcean
+# enforces one registry per account, so a dorm-guard-scoped namespace
+# is not available. Image path is registry.digitalocean.com/nightloom/
+# dorm_guard. Namespace chosen in Slice 5 ADR (docs/decisions/
+# pr-0021-kamal-deploy.md). DOCR uses the DigitalOcean API access
+# token as both username and password — both fields reference the
+# same KAMAL_REGISTRY_PASSWORD secret.
 registry:
-  # Alternatives: hub.docker.com / registry.digitalocean.com / ghcr.io / ...
-  server: localhost:5555
+  server: registry.digitalocean.com/nightloom
+  username:
+    - KAMAL_REGISTRY_PASSWORD
+  password:
+    - KAMAL_REGISTRY_PASSWORD
 
-  # Needed for authenticated registries.
-  # username: your-user
-
-  # Always use an access token rather than real password when possible.
-  # password:
-  #   - KAMAL_REGISTRY_PASSWORD
-
-# Inject ENV variables into containers (secrets come from .kamal/secrets).
+# Inject ENV variables into containers (secrets come from .kamal/secrets,
+# which sources .env at deploy time).
 env:
   secret:
     - RAILS_MASTER_KEY
+    - KAMAL_REGISTRY_PASSWORD
+    - SMTP_USER_NAME
+    - SMTP_PASSWORD
+    - DORM_GUARD_ALERT_TO
   clear:
-    # Run the Solid Queue Supervisor inside the web server's Puma process to do jobs.
-    # When you start using multiple servers, you should split out job processing to a dedicated machine.
+    # Public hostname — single source of truth, consumed by config.hosts,
+    # config.host_authorization, and config.action_mailer.default_url_options.
+    DORM_GUARD_HOST: dorm-guard.com
+
+    # Outbound mailer sender. MUST be a verified SES identity while SES
+    # is in sandbox mode — and the SES-SendOnly IAM policy attached to
+    # dorm-guard-ses-smtp restricts `ses:FromAddress` to exactly this
+    # address. Any other sender value will be rejected by SES at send
+    # time. Verifying the dorm-guard.com domain as a full sending
+    # identity (so we can use dorm-guard@dorm-guard.com here) requires
+    # SPF/DKIM/DMARC DNS records — out of scope for Epic 3, tracked as
+    # a follow-up issue.
+    DORM_GUARD_MAIL_FROM: tommy.caruso2118@gmail.com
+
+    # SMTP endpoint. Provider-neutral naming — currently pointed at
+    # Amazon SES us-east-1. Swap providers via .env / kamal env push,
+    # not via config changes, so the image stays portable.
+    #
+    # Port 2587 instead of the canonical 587 because DigitalOcean
+    # blocks outbound SMTP on 25/465/587 by default as a spam
+    # mitigation (see https://docs.digitalocean.com/support/why-is-
+    # smtp-blocked/). SES exposes 2465 and 2587 as alternate ports
+    # for exactly this reason — they bypass cloud-provider ISP
+    # blocks. 2587 is STARTTLS-over-alternate, same protocol as 587.
+    # Unblocking the canonical 587 requires a DO support ticket.
+    SMTP_ADDRESS: email-smtp.us-east-1.amazonaws.com
+    SMTP_PORT: "2587"
+
+    # Run the Solid Queue Supervisor inside the web server's Puma process
+    # to do jobs. When you start using multiple servers, split job
+    # processing to a dedicated machine (separate Kamal accessory) —
+    # doing that is Epic 7 territory.
     SOLID_QUEUE_IN_PUMA: true
 
-    # Set number of processes dedicated to Solid Queue (default: 1)
-    # JOB_CONCURRENCY: 3
-
-    # Set number of cores available to the application on each server (default: 1).
-    # WEB_CONCURRENCY: 2
-
-    # Match this to any external database server to configure Active Record correctly
-    # Use dorm_guard-db for a db accessory server on same machine via local kamal docker network.
-    # DB_HOST: 192.168.0.2
-
-    # Log everything from Rails
-    # RAILS_LOG_LEVEL: debug
+    # Pinned to 1 to prevent Solid Queue recurring-scheduler double-fire.
+    # Running `plugin :solid_queue` inside Puma under WEB_CONCURRENCY > 1
+    # would start the scheduler N times and fire schedule_due_checks N×
+    # per minute. The value is enforced here (not just documented in the
+    # ADR) because "documented but not enforced" is a fragile control.
+    WEB_CONCURRENCY: 1
 
 # Aliases are triggered with "bin/kamal <alias>". You can overwrite arguments on invocation:
 # "bin/kamal logs -r job" will tail logs from the first server in the job section.
@@ -66,8 +104,9 @@ aliases:
   logs: app logs -f
   dbc: app exec --interactive --reuse "bin/rails dbconsole --include-password"
 
-# Use a persistent storage volume for sqlite database files and local Active Storage files.
-# Recommended to change this to a mounted volume path that is backed up off server.
+# Use a persistent storage volume for sqlite database files and local
+# Active Storage files. The volume is named so day-one backups (a future
+# ops epic) can bolt on without code changes.
 volumes:
   - "dorm_guard_storage:/rails/storage"
 
@@ -86,34 +125,7 @@ builder:
   # # Pass arguments and secrets to the Docker build process
   # args:
   #   RUBY_VERSION: ruby-4.0.0
-  # secrets:
-  #   - GITHUB_TOKEN
-  #   - RAILS_MASTER_KEY
 
 # Use a different ssh user than root
 # ssh:
 #   user: app
-
-# Use accessory services (secrets come from .kamal/secrets).
-# accessories:
-#   db:
-#     image: mysql:8.0
-#     host: 192.168.0.2
-#     # Change to 3306 to expose port to the world instead of just local network.
-#     port: "127.0.0.1:3306:3306"
-#     env:
-#       clear:
-#         MYSQL_ROOT_HOST: '%'
-#       secret:
-#         - MYSQL_ROOT_PASSWORD
-#     files:
-#       - config/mysql/production.cnf:/etc/mysql/my.cnf
-#       - db/production.sql:/docker-entrypoint-initdb.d/setup.sql
-#     directories:
-#       - data:/var/lib/mysql
-#   redis:
-#     image: valkey/valkey:8
-#     host: 192.168.0.2
-#     port: 6379
-#     directories:
-#       - data:/data

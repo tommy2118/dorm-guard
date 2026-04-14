@@ -1,1 +1,9 @@
 # See https://www.robotstxt.org/robotstxt.html for documentation on how to use the robots.txt file
+#
+# dorm-guard is deployed without authentication as a deliberate stepping
+# stone to Epic 4 (auth + security hardening). Until auth lands, the
+# /sites CRUD surface is technically reachable by anyone who finds the
+# URL. Disallow indexing across the board so crawlers don't spread the
+# URL around while the MVP is in its zero-auth window.
+User-agent: *
+Disallow: /

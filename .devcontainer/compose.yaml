@@ -8,6 +8,28 @@ services:
 
     volumes:
     - ../../dorm_guard:/workspaces/dorm_guard:cached
+    # Mount the host's Docker socket so `bin/dc kamal ...` (and any other
+    # docker-touching command) can reach the host engine without running a
+    # docker daemon inside the devcontainer. On macOS this resolves via
+    # Docker Desktop's socket at ~/.docker/run/docker.sock (symlinked by
+    # Docker Desktop to /var/run/docker.sock on the host). On Linux it's
+    # the host daemon's socket directly.
+    - /var/run/docker.sock:/var/run/docker.sock
+    # Forward the host's ssh-agent into the container via Docker Desktop's
+    # magic socket (/run/host-services/ssh-auth.sock). This lets `bin/dc
+    # kamal setup` authenticate to remote hosts using the keys loaded in
+    # the host's ssh-agent WITHOUT copying private key material into the
+    # container. Paired with the SSH_AUTH_SOCK environment variable below.
+    - /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock
+    # Share the host's known_hosts file so kamal's SSH client trusts the
+    # same host keys the operator already accepted. Read-only so the
+    # container can't corrupt the operator's trust store. Without this,
+    # kamal's first connect to each new droplet would fail host key
+    # verification.
+    - ~/.ssh/known_hosts:/home/vscode/.ssh/known_hosts:ro
+
+    environment:
+    - SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
 
     ports:
     - "3000:3000"

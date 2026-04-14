@@ -129,3 +129,106 @@ jobs:
           name: screenshots
           path: ${{ github.workspace }}/tmp/screenshots
           if-no-files-found: ignore
+
+  deploy:
+    # Auto-deploy to dorm-guard.com after every green push to main.
+    # Runs on a real GitHub runner (not the devcontainer) where Docker
+    # + buildx are natively available — no bin/dc in this job.
+    #
+    # Gated on: (a) the event is a push (not a PR), (b) to the main
+    # branch, and (c) every quality gate above passed. All three
+    # conditions must hold or the job is skipped silently.
+    name: Deploy to dorm-guard.com
+    runs-on: ubuntu-latest
+    needs: [ scan_ruby, scan_js, lint, test, system-test ]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    concurrency:
+      # Serialize deploys so two fast main pushes don't race on the
+      # same SQLite volume / Kamal deploy lock.
+      group: deploy-production
+      cancel-in-progress: false
+
+    env:
+      DOCKER_BUILDKIT: 1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Log in to DigitalOcean Container Registry
+        run: doctl registry login --expiry-seconds 1200
+
+      - name: Install SSH key for Kamal
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.KAMAL_SSH_KEY }}
+
+      - name: Add droplet host key to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          # The droplet IP is hardcoded in config/deploy.yml (servers.web).
+          # Keeping it duplicated here is a smell we accept for MVP —
+          # a future ops epic can extract both to a single source.
+          ssh-keyscan -H 104.236.125.236 >> ~/.ssh/known_hosts
+
+      - name: Write .env from GitHub repo secrets
+        run: |
+          # Schema must match .env.example — adding a deploy var
+          # without updating .env.example is a process violation.
+          # Every secret referenced in config/deploy.yml's env.secret
+          # (plus KAMAL_REGISTRY_PASSWORD = DO access token reused
+          # for DOCR auth) must appear here.
+          cat > .env <<ENVFILE
+          KAMAL_REGISTRY_PASSWORD=${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          SMTP_USER_NAME=${{ secrets.SMTP_USER_NAME }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          DORM_GUARD_ALERT_TO=${{ secrets.DORM_GUARD_ALERT_TO }}
+          ENVFILE
+
+      - name: Write RAILS_MASTER_KEY to config/master.key
+        run: |
+          # .kamal/secrets reads this file via `cat config/master.key`
+          # — same code path as the laptop deploy — so writing it here
+          # keeps CI schema-symmetric with the local operator flow.
+          # config/master.key is gitignored so this doesn't clobber
+          # committed state.
+          echo "${{ secrets.RAILS_MASTER_KEY }}" > config/master.key
+          chmod 600 config/master.key
+
+      - name: Kamal deploy
+        run: bundle exec kamal deploy
+        env:
+          KAMAL_REGISTRY_PASSWORD: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Smoke check /up
+        run: |
+          # After kamal deploy reports a healthy container, a last
+          # end-to-end check: does /up actually respond 200 over TLS
+          # from the public internet? If anything above silently
+          # deployed a broken container, this catches it before the
+          # workflow reports success.
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if curl -sSfI --max-time 15 https://dorm-guard.com/up > /tmp/up.headers; then
+              echo "== /up attempt $attempt succeeded =="
+              head -5 /tmp/up.headers
+              exit 0
+            fi
+            echo "attempt $attempt failed, sleeping 5s"
+            sleep 5
+          done
+          echo "ERROR: /up did not return 200 after 5 attempts"
+          exit 1

@@ -51,8 +51,21 @@ COPY . .
 # -j 1 disable parallel compilation to avoid a QEMU bug: https://github.com/rails/bootsnap/issues/495
 RUN bundle exec bootsnap precompile -j 1 app/ lib/
 
-# Precompiling assets for production without requiring secret RAILS_MASTER_KEY
-RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
+# Precompiling assets for production without requiring any real
+# production secret at build time. assets:precompile loads the full
+# production environment (so tailwindcss-rails + other asset tasks can
+# see config), which evaluates config/environments/production.rb —
+# and that file intentionally fail-fasts on missing SMTP credentials
+# (ENV.fetch without default) so a container with unset creds refuses
+# to boot. Build time is the exception: at this stage there's no
+# intent to connect to SMTP, so we pass dummy values for the same
+# ENV vars. Dockerfile RUN-line environment doesn't persist into the
+# final image's runtime environment, so Kamal's real env.secret
+# values still win at runtime.
+RUN SECRET_KEY_BASE_DUMMY=1 \
+    SMTP_USER_NAME=build-dummy \
+    SMTP_PASSWORD=build-dummy \
+    ./bin/rails assets:precompile
 
 
 

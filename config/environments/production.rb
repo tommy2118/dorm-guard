@@ -24,14 +24,19 @@ Rails.application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
-  # Assume all access to the app is happening through a SSL-terminating reverse proxy.
-  # config.assume_ssl = true
+  # Kamal's Thruster proxy probes /up over plain HTTP inside the container
+  # before TLS is wired up. Both the SSL redirect middleware and the host
+  # authorization middleware need to let /up through, so the exclusion
+  # predicate is shared.
+  health_check_exclude = ->(request) { request.path == "/up" }
 
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
-
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  # Kamal's Thruster proxy terminates TLS and forwards to Puma over plain HTTP
+  # inside the container; `assume_ssl` tells Rails to treat the forwarded
+  # request as secure, and `force_ssl` redirects any still-plain-HTTP traffic
+  # that reaches Puma directly.
+  config.assume_ssl = true
+  config.force_ssl = true
+  config.ssl_options = { redirect: { exclude: health_check_exclude } }
 
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
@@ -53,21 +58,36 @@ Rails.application.configure do
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = { database: { writing: :queue } }
 
-  # Ignore bad email addresses and do not raise email delivery errors.
-  # Set this to true and configure the email server for immediate delivery to raise delivery errors.
-  # config.action_mailer.raise_delivery_errors = false
+  # Deliver mail through SMTP. Provider is chosen at deploy time via
+  # SMTP_ADDRESS; currently pointed at Amazon SES
+  # (email-smtp.us-east-1.amazonaws.com, AUTH LOGIN, STARTTLS on 587).
+  # Credentials come from ENV via .env / Kamal's secrets plumbing so
+  # the image builds without master.key and CI stays symmetric with
+  # laptop. Accepted trade-off: delivery errors are swallowed so a
+  # transient SMTP hiccup doesn't pollute Solid Queue's failed-job
+  # table on every downtime alert. Cost: outage or credential rot
+  # silently drops alerts — smoke testing and the provider's
+  # dashboard (CloudWatch / SES console for SES) are the external
+  # backstops. Revisit in Epic 6 when mail is one of several alert
+  # channels and per-channel error visibility matters more.
+  config.action_mailer.delivery_method = :smtp
+  config.action_mailer.perform_deliveries = true
+  config.action_mailer.raise_delivery_errors = false
+  config.action_mailer.smtp_settings = {
+    address:              ENV.fetch("SMTP_ADDRESS", "email-smtp.us-east-1.amazonaws.com"),
+    port:                 ENV.fetch("SMTP_PORT", "587").to_i,
+    user_name:            ENV.fetch("SMTP_USER_NAME"),
+    password:             ENV.fetch("SMTP_PASSWORD"),
+    authentication:       :login,
+    enable_starttls_auto: true
+  }
 
-  # Set host to be used by links generated in mailer templates.
-  config.action_mailer.default_url_options = { host: "example.com" }
-
-  # Specify outgoing SMTP server. Remember to add smtp/* credentials via bin/rails credentials:edit.
-  # config.action_mailer.smtp_settings = {
-  #   user_name: Rails.application.credentials.dig(:smtp, :user_name),
-  #   password: Rails.application.credentials.dig(:smtp, :password),
-  #   address: "smtp.example.com",
-  #   port: 587,
-  #   authentication: :plain
-  # }
+  # Set host to be used by links generated in mailer templates. Host comes
+  # from ENV so the same image deploys to any domain.
+  config.action_mailer.default_url_options = {
+    host: ENV.fetch("DORM_GUARD_HOST", "dorm-guard.com"),
+    protocol: "https"
+  }
 
   # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
   # the I18n.default_locale when a translation cannot be found).
@@ -79,12 +99,12 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection and other `Host` header attacks.
-  # config.hosts = [
-  #   "example.com",     # Allow requests from example.com
-  #   /.*\.example\.com/ # Allow requests from subdomains like `www.example.com`
-  # ]
-  #
-  # Skip DNS rebinding protection for the default health check endpoint.
-  # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  # Enable DNS rebinding protection and other Host header attacks. The host
+  # allowlist reads from the same ENV var as default_url_options so there's
+  # exactly one source of truth for the public domain per deploy.
+  config.hosts = [ ENV.fetch("DORM_GUARD_HOST", "dorm-guard.com") ]
+
+  # Kamal's /up health probe arrives with the container's internal Host
+  # header, not the public domain, so the allowlist needs to let it through.
+  config.host_authorization = { exclude: health_check_exclude }
 end
