@@ -1,0 +1,205 @@
+intent: >
+  Add DnsChecker and the dns_hostname column so pure-DNS checks work end-to-end,
+  including the url-optional-for-DNS validation relaxation and form plumbing.
+
+slice: 5/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - app/services/dns_checker.rb
+    - db/migrate/20260414203658_add_dns_hostname_to_sites.rb
+    - db/migrate/20260414203901_relax_url_null_constraint_on_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/components/site_form/type_fields_component.html.erb
+    - app/components/site_form/dns_fields_component.rb
+    - app/components/site_form/dns_fields_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/services/dns_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  actual:
+    - app/services/dns_checker.rb
+    - db/migrate/20260414203658_add_dns_hostname_to_sites.rb
+    - db/migrate/20260414203901_relax_url_null_constraint_on_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/components/site_form/type_fields_component.html.erb
+    - app/components/site_form/dns_fields_component.rb
+    - app/components/site_form/dns_fields_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/services/dns_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/dns_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "Resolv.getaddresses returns an empty array for NXDOMAIN rather than raising; Resolv::ResolvError is reserved for actual resolution errors like timeout or malformed query"
+  - "SQLite's change_column_null implementation correctly relaxes an existing NOT NULL constraint and does not rewrite existing row data"
+  - "Site records persisted before Slice 5 (all http) never exercise the new url-nullable path and continue to validate as before"
+
+specifications:
+  - "DnsChecker.check(hostname:) takes a single hostname primitive; no port, no url"
+  - "DnsChecker deliberately does NOT call IpGuard — DNS resolution of private hostnames is a legitimate monitoring goal (does internal DNS work?)"
+  - "DnsChecker success: error_message nil, metadata: { resolved_addresses: [...] } with 1+ entries"
+  - "DnsChecker NXDOMAIN (empty resolve): error_message populated with 'no addresses resolved for ...', metadata: { resolved_addresses: [] }"
+  - "DnsChecker rescues Resolv::ResolvError and IOError; any other exception propagates"
+  - "CheckDispatcher routes :dns to DnsChecker.check(hostname: site.dns_hostname)"
+  - "Site url presence AND format validation are skipped when check_type is :dns — DNS sites have no URL concept"
+  - "Site dns_hostname is validated for presence, DNS-label format (letters/digits/hyphens with no leading/trailing hyphen, max 253 chars total), only when check_type is :dns"
+  - "Site#clear_irrelevant_config nulls dns_hostname for non-:dns saves and nulls url for :dns saves — stale config from any check_type flip is scrubbed at the model layer"
+  - "Sites table allows NULL on url at the database level; Epic 1's NOT NULL has been relaxed"
+  - "SiteFormComponent shell wraps the url field in `unless site.dns?` — the only check_type conditional remaining in the shell after the Slice 4 extraction, scoped to the one field that's shared-except-DNS"
+  - "SiteForm::DnsFieldsComponent renders only the dns_hostname text input"
+
+deviations_from_plan: >
+  Slice 5 actual scope included db/migrate/*_relax_url_null_constraint_on_sites.rb
+  which was not in the plan's original declared list. Plan bug: the prose
+  said "null url when switching to DNS" but Epic 1's migration had made
+  sites.url NOT NULL, so the callback's self.url = nil on a :dns flip
+  raised SQLite3::ConstraintException. Plan file updated to include the
+  new migration in Slice 5's declared scope.
+
+trade_offs: >
+  Kept the url field inside the shell with an `unless site.dns?` wrapper
+  instead of moving url to a per-type component. Cost: one conditional
+  branch remains in the shell — technically a Slice 4 refactor target.
+  Benefit: the alternative (url inside an HttpFieldsComponent / SslFieldsComponent /
+  TcpFieldsComponent / ContentMatchFieldsComponent) would duplicate the
+  same 8-line form-control block across four leaf components. Shared-except-one
+  is a real pattern and inline-condition on the shared thing beats
+  copy-pasting the shared thing four times.
+
+  DnsChecker explicitly bypasses IpGuard. Cost: a malicious user who
+  can create Site records could enumerate internal hostnames by watching
+  resolution success/failure. Mitigation: Site creation is authenticated
+  (Epic 4), and the DNS resolve itself doesn't return sensitive data
+  beyond whether the hostname exists. The alternative (running IpGuard
+  and blocking resolve-to-private) makes legitimate internal DNS monitoring
+  impossible, which is the entire point of the check type. Accepted.
+
+  DNS_HOSTNAME_REGEX rejects trailing dots and punycode edge cases. The
+  standard ASCII FQDN shape covers 99% of real use cases; unicode domains
+  are out of scope for this epic.
+
+interfaces:
+  consumed:
+    - "Resolv.getaddresses(hostname) -> Array<String>"
+    - "CheckOutcome.new(status_code:, response_time_ms:, error_message:, checked_at:, body:, metadata:) -> CheckOutcome"
+    - "Site#check_type -> String"
+    - "Site#dns_hostname -> String | nil"
+  published:
+    - "DnsChecker.check(hostname:) -> CheckOutcome"
+    - "CheckDispatcher.call(site) -> CheckOutcome | raises CheckDispatcher::UnknownCheckType"
+    - "Site#dns? -> Boolean"
+    - "Site#dns_hostname= (string writer)"
+    - "Site::DNS_HOSTNAME_REGEX -> Regexp"
+    - "SiteForm::DnsFieldsComponent.new(form:, site:) -> component"
+
+self_review:
+  tests: >
+    Added spec/services/dns_checker_spec.rb with 7 cases: single public address
+    success, multi-address (A+AAAA) success, private address in the resolved set
+    still succeeds with metadata exposing the address, NXDOMAIN (empty) → error,
+    Resolv::ResolvError raised → error, IpGuard explicitly NOT invoked (regression
+    lock for the DNS-bypass behavior). Extended check_dispatcher_spec.rb with the
+    :dns dispatch case. Extended site_spec.rb with dns_hostname validation,
+    url-relaxation-for-dns, valid/invalid hostname formats, and two new
+    clear_irrelevant_config cases (url nulls on dns flip, dns_hostname nulls on
+    http flip). Extended site_form_component_spec.rb with :dns rendering
+    (dns_hostname present, url absent, name+interval still present). Added
+    new_dns_site preview variant.
+  consistency: >
+    DnsChecker structure mirrors HttpChecker / SslChecker / TcpChecker — class
+    method entrypoint, private build_outcome, elapsed_ms helper, RECOVERABLE_ERRORS
+    frozen constant. The intentional asymmetry is NO IpGuard call — called out
+    in both the class comment and the spec. SiteForm::DnsFieldsComponent matches
+    the Slice 4 pattern (form/site kwargs, attr_reader, field_error helper).
+  metz: >
+    Measured. dns_checker.rb is 47 lines, 4 methods. check is 7 body lines
+    (over the 5-line rule because of the conditional build for empty vs
+    non-empty result) — kept as one method because splitting the two-branch
+    construction across helpers added round trips without clarity; the branches
+    are both single-liners calling build_outcome. build_outcome 8 lines (single
+    CheckOutcome expression). elapsed_ms 1. site.rb grew from 55 to 62 lines
+    (new enum branch in clear_irrelevant_config and the DNS regex constant).
+    check_dispatcher.rb grew from 29 to 31 lines (one case branch).
+    site_form_component.html.erb stayed roughly level — the unless wrapper
+    added 2 lines, the url field moved unchanged.
+  duplication: >
+    Four SiteForm:: leaf components (SslFieldsComponent, TcpFieldsComponent,
+    DnsFieldsComponent, plus TypeFieldsComponent dispatcher) have near-identical
+    class bodies: initialize(form:, site:), attr_reader :form, :site, field_error
+    helper on the leaves. The duplication tax is ~5 lines per leaf. Extraction to
+    a SiteForm::FieldsComponent base class is now justified by repetition count
+    but deferred to Slice 6 or the smoke gate — landing it mid-slice would
+    expand scope. Noted as a follow-up candidate.
+  mocking: >
+    dns_checker_spec stubs Resolv.getaddresses and asserts IpGuard.check! is
+    NOT called in the success path. Both are owned boundaries (stdlib + internal
+    service).
+  error_paths: >
+    RECOVERABLE_ERRORS enumerates two classes: Resolv::ResolvError for DNS
+    protocol errors and IOError for the rare Resolv path that raises IOError
+    on network timeout. Both have a code path that leads to build_outcome
+    with error_message populated. NXDOMAIN (empty array result, not an error)
+    is handled as a separate branch in the happy-path code.
+  security: >
+    The "DNS bypasses IpGuard" asymmetry is the biggest security-relevant
+    decision in this slice. Documented in the class comment, in the agent-note
+    trade_offs, and in a dedicated spec case (regression lock). Site creation
+    still requires authentication (Epic 4) so the attack surface is
+    authenticated-only. Empty string URL on DNS sites avoids leaking a stale
+    URL from a previous check_type.
+  performance: >
+    Each check does one Resolv.getaddresses call with stdlib default timeout.
+    No caching, no concurrent resolves. A 60s cadence on a handful of DNS
+    sites is nowhere near saturating Resolv.
+  api: >
+    Additive. DnsChecker is new. Site#dns?, Site#dns_hostname, Site::DNS_HOSTNAME_REGEX
+    are new. CheckDispatcher gains a :dns branch. SiteForm::DnsFieldsComponent
+    is new. sites.url is now NULL-permissive at the DB level — backward compat
+    for existing http rows is trivially preserved (they all still have their URLs).
+  dead_code: >
+    None. DNS_HOSTNAME_REGEX is referenced in the validates call. The DnsChecker
+    RECOVERABLE_ERRORS list is used in the rescue clause. All leaf components
+    are rendered through the dispatcher.
+
+confidence: high
+reviewer_attention:
+  - "app/services/dns_checker.rb:5-9"  # the "no IpGuard" comment — critical design choice, not a typo or omission
+  - "app/models/site.rb:55-61"  # clear_irrelevant_config scrubs FOUR columns + url now; size is creeping toward a refactor
+  - "db/migrate/20260414203901_relax_url_null_constraint_on_sites.rb"  # schema nullability change — verify reversibility on SQLite
