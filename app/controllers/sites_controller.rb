@@ -46,6 +46,6 @@ class SitesController < ApplicationController
   end
 
   def site_params
-    params.expect(site: [ :name, :url, :interval_seconds, :check_type, :tls_port ])
+    params.expect(site: [ :name, :url, :interval_seconds, :check_type, :tls_port, :tcp_port ])
   end
 end

@@ -42,6 +42,24 @@ RSpec.describe CheckDispatcher do
       end
     end
 
+    context "with a :tcp site" do
+      let(:tcp_site) do
+        Site.create!(
+          name: "SSH",
+          url: "https://example.com",
+          interval_seconds: 60,
+          check_type: :tcp,
+          tcp_port: 22
+        )
+      end
+
+      it "dispatches to TcpChecker.check with host derived from the url and the tcp_port" do
+        expect(TcpChecker).to receive(:check).with(host: "example.com", port: 22).and_return(outcome)
+
+        expect(described_class.call(tcp_site)).to eq(outcome)
+      end
+    end
+
     context "with an unrouted check_type" do
       let(:phantom_site) { instance_double(Site, check_type: "phantom", url: "https://example.com") }
 

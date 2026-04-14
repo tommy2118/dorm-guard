@@ -45,18 +45,54 @@ RSpec.describe SiteFormComponent, type: :component do
       expect(page).to have_css("input[name='site[interval_seconds]'].input.input-bordered")
     end
 
-    it "renders a check_type select with HTTP and SSL options" do
+    it "renders a check_type select with HTTP / SSL / TCP options" do
       expect(page).to have_css("select[name='site[check_type]'].select.select-bordered")
       expect(page).to have_css("select[name='site[check_type]'] option[value='http']", text: "HTTP")
       expect(page).to have_css("select[name='site[check_type]'] option[value='ssl']", text: /SSL/)
+      expect(page).to have_css("select[name='site[check_type]'] option[value='tcp']", text: /TCP/)
     end
 
-    it "renders a tls_port input with the DEFAULT_TLS_PORT as initial value" do
-      expect(page).to have_css("input[name='site[tls_port]'][value='443']")
+    it "does not render tls_port or tcp_port inputs for a default :http site" do
+      # The per-type fields dispatcher renders nothing for :http — the
+      # shell owns only the shared fields.
+      expect(page).not_to have_css("input[name='site[tls_port]']")
+      expect(page).not_to have_css("input[name='site[tcp_port]']")
     end
 
     it "renders a Cancel link to the sites index" do
       expect(page).to have_link("Cancel", href: "/sites")
+    end
+  end
+
+  describe "rendering for a new :ssl site" do
+    before do
+      with_request_url "/sites/new" do
+        render_inline(described_class.new(site: Site.new(check_type: :ssl)))
+      end
+    end
+
+    it "renders the TLS port input with DEFAULT_TLS_PORT as initial value" do
+      expect(page).to have_css("input[name='site[tls_port]'][value='443']")
+    end
+
+    it "does not render the TCP port input" do
+      expect(page).not_to have_css("input[name='site[tcp_port]']")
+    end
+  end
+
+  describe "rendering for a new :tcp site" do
+    before do
+      with_request_url "/sites/new" do
+        render_inline(described_class.new(site: Site.new(check_type: :tcp)))
+      end
+    end
+
+    it "renders the TCP port input with DEFAULT_TCP_PORT as initial value" do
+      expect(page).to have_css("input[name='site[tcp_port]'][value='80']")
+    end
+
+    it "does not render the TLS port input" do
+      expect(page).not_to have_css("input[name='site[tls_port]']")
     end
   end
 

@@ -1,6 +1,7 @@
 class Site < ApplicationRecord
   MIN_INTERVAL_SECONDS = 30
   DEFAULT_TLS_PORT = 443
+  DEFAULT_TCP_PORT = 80
 
   enum :status, { unknown: 0, up: 1, down: 2 }, default: :unknown
   enum :check_type, { http: 0, ssl: 1, tcp: 2, dns: 3, content_match: 4 }, default: :http
@@ -21,6 +22,10 @@ class Site < ApplicationRecord
             presence: true,
             numericality: { only_integer: true, in: 1..65_535 },
             if: :ssl?
+  validates :tcp_port,
+            presence: true,
+            numericality: { only_integer: true, in: 1..65_535 },
+            if: :tcp?
 
   def due?
     last_checked_at.nil? || last_checked_at <= interval_seconds.seconds.ago
@@ -36,10 +41,8 @@ class Site < ApplicationRecord
 
   private
 
-  # Seam for per-check-type config scrubbing. Later slices extend this as new
-  # columns land. Keeps the schema honest: a flipped check_type never leaves
-  # stale config from the old type hanging around.
   def clear_irrelevant_config
     self.tls_port = nil unless ssl?
+    self.tcp_port = nil unless tcp?
   end
 end

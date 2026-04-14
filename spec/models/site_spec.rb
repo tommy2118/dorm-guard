@@ -145,6 +145,29 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "tcp_port validation" do
+    let(:tcp_attrs) { valid_attrs.merge(check_type: :tcp, tcp_port: 22) }
+
+    it "is valid for a :tcp site with a legal port" do
+      expect(described_class.new(tcp_attrs)).to be_valid
+    end
+
+    it "requires tcp_port when check_type is :tcp" do
+      site = described_class.new(tcp_attrs.merge(tcp_port: nil))
+      expect(site).not_to be_valid
+      expect(site.errors[:tcp_port]).to be_present
+    end
+
+    it "rejects a tcp_port of 0" do
+      site = described_class.new(tcp_attrs.merge(tcp_port: 0))
+      expect(site).not_to be_valid
+    end
+
+    it "does not require tcp_port for an :http site" do
+      expect(described_class.new(valid_attrs.merge(check_type: :http))).to be_valid
+    end
+  end
+
   describe "tls_port validation" do
     let(:ssl_attrs) { valid_attrs.merge(check_type: :ssl, tls_port: 443) }
 
@@ -188,6 +211,21 @@ RSpec.describe Site, type: :model do
         valid_attrs.merge(check_type: :ssl, tls_port: 8443)
       )
       expect(site.reload.tls_port).to eq(8443)
+    end
+
+    it "nulls tcp_port when flipping from :tcp to :http" do
+      site = described_class.create!(
+        valid_attrs.merge(check_type: :tcp, tcp_port: 22)
+      )
+      site.update!(check_type: :http)
+      expect(site.reload.tcp_port).to be_nil
+    end
+
+    it "leaves tcp_port alone for :tcp sites" do
+      site = described_class.create!(
+        valid_attrs.merge(check_type: :tcp, tcp_port: 22)
+      )
+      expect(site.reload.tcp_port).to eq(22)
     end
   end
 

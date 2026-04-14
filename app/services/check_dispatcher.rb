@@ -22,6 +22,8 @@ class CheckDispatcher
       HttpChecker.check(site.url)
     when "ssl"
       SslChecker.check(host: URI.parse(site.url).host, port: site.tls_port)
+    when "tcp"
+      TcpChecker.check(host: URI.parse(site.url).host, port: site.tcp_port)
     else
       raise UnknownCheckType, site.check_type
     end
