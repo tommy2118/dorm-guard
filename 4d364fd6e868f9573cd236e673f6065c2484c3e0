@@ -86,5 +86,5 @@ self_review:
 
 confidence: high
 reviewer_attention:
-  - "app/services/ssrf_guard.rb:48-55 — block! raises on IPAddr::InvalidAddressError rather than skipping; verify this is the correct fail-closed behaviour for your threat model"
+  - "app/services/ssrf_guard.rb:71-78 — block! raises on IPAddr::InvalidAddressError rather than skipping; verify this is the correct fail-closed behaviour for your threat model"
   - "app/services/ssrf_guard.rb:38-40 — fc00::/7 covers both fc00::/8 and fd00::/8; double-check the prefix length covers the intended ULA range"
