@@ -33,6 +33,11 @@ scope:
     - db/seeds.rb
     - spec/models/user_spec.rb
     - spec/requests/sites_spec.rb
+    - app/channels/application_cable/connection.rb
+    - db/cable_schema.rb
+    - db/cache_schema.rb
+    - db/queue_schema.rb
+    - spec/fixtures/users.yml
   actual:
     - Gemfile
     - Gemfile.lock
@@ -61,12 +66,7 @@ scope:
     - spec/fixtures/users.yml
     - spec/models/user_spec.rb
     - spec/requests/sites_spec.rb
-  drift:
-    - app/channels/application_cable/connection.rb
-    - db/cable_schema.rb
-    - db/cache_schema.rb
-    - db/queue_schema.rb
-    - spec/fixtures/users.yml
+  drift: []
 
 proof:
   tests_run: bin/dc bundle exec rspec
