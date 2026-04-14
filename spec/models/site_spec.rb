@@ -32,6 +32,15 @@ RSpec.describe Site, type: :model do
       expect(site.errors[:url]).to be_present
     end
 
+    # Regression lock: pin injection schemes against the http/https whitelist.
+    # URI::DEFAULT_PARSER.make_regexp(%w[http https]) rejects all of these;
+    # this spec ensures a future refactor cannot silently widen the allowlist.
+    %w[javascript:alert(1) data:text/html,<h1>x</h1> file:///etc/passwd ftp://x.com].each do |bad_url|
+      it "rejects #{bad_url.split(':').first}: scheme" do
+        expect(described_class.new(valid_attrs.merge(url: bad_url))).not_to be_valid
+      end
+    end
+
     it "accepts both http and https urls" do
       expect(described_class.new(valid_attrs.merge(url: "http://example.com"))).to be_valid
       expect(described_class.new(valid_attrs.merge(url: "https://example.com"))).to be_valid
