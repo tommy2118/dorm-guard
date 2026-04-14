@@ -1,92 +1,95 @@
-intent: >
-  Replace the Rails scaffold from@example.com with an ENV-driven real
-  sender, document the full deploy ENV contract in README, and ship
-  a robots.txt Disallow for the zero-auth deploy window.
+intent: 'Replace the Rails scaffold from@example.com with an ENV-driven real sender,
+  document the full deploy ENV contract in README, and ship a robots.txt Disallow
+  for the zero-auth deploy window.
 
+  '
 slice: 4/9
 kind: feature
 behavior_change: additive
 reversibility: reversible
-
 scope:
   declared:
-    - app/mailers/application_mailer.rb
-    - spec/mailers/application_mailer_spec.rb
-    - README.md
-    - public/robots.txt
+  - app/mailers/application_mailer.rb
+  - spec/mailers/application_mailer_spec.rb
+  - README.md
+  - public/robots.txt
+  - ".env.example"
   actual:
-    - app/mailers/application_mailer.rb
-    - spec/mailers/application_mailer_spec.rb
-    - README.md
-    - public/robots.txt
-    - .env.example
-  drift:
-    - .env.example
-
+  - app/mailers/application_mailer.rb
+  - spec/mailers/application_mailer_spec.rb
+  - README.md
+  - public/robots.txt
+  - ".env.example"
+  drift: []
 proof:
   tests_run: bin/dc bundle exec rspec
   result: green
   failing: 0
   coverage_delta: "+3 examples"
-
 tests:
-  needed: "yes"
+  needed: 'yes'
   added:
-    - spec/mailers/application_mailer_spec.rb
-
+  - spec/mailers/application_mailer_spec.rb
 lint:
   run: bin/dc bundle exec rubocop app/mailers/application_mailer.rb spec/mailers/application_mailer_spec.rb
   result: clean
   count: 0
-
 verification:
   tested:
-    - "ApplicationMailer.default[:from] resolves to the production sender when DORM_GUARD_MAIL_FROM is unset"
-    - "ApplicationMailer.default[:from] is not the scaffold 'from@example.com'"
-    - "The mailer source file reads ENV.fetch with the correct default"
+  - ApplicationMailer.default[:from] resolves to the production sender when DORM_GUARD_MAIL_FROM
+    is unset
+  - ApplicationMailer.default[:from] is not the scaffold 'from@example.com'
+  - The mailer source file reads ENV.fetch with the correct default
   manual:
-    - "Manually reviewed README's new Deployment environment table for correctness against the code in Slices 2A/2B and the .env.example contract"
-    - "Manually read public/robots.txt — Disallow: / is correct for a single-host deploy"
-
+  - Manually reviewed README's new Deployment environment table for correctness against
+    the code in Slices 2A/2B and the .env.example contract
+  - 'Manually read public/robots.txt — Disallow: / is correct for a single-host deploy'
 assumptions:
-  - "The operator's Mailgun verified domain will be compatible with the 'dorm-guard@dorm-guard.com' default sender OR the operator will set DORM_GUARD_MAIL_FROM before Slice 7. If neither is true, Mailgun will reject the send and the Slice 7 smoke will fail. Slice 5's ADR flags this as a precondition."
-  - "A blanket robots.txt Disallow is honored by the major crawlers (Google/Bing). Malicious scrapers ignore it, but that's not what this mitigation is for — it's to avoid the URL leaking into search results during the zero-auth window."
-
+- The operator's Mailgun verified domain will be compatible with the 'dorm-guard@dorm-guard.com'
+  default sender OR the operator will set DORM_GUARD_MAIL_FROM before Slice 7. If
+  neither is true, Mailgun will reject the send and the Slice 7 smoke will fail. Slice
+  5's ADR flags this as a precondition.
+- A blanket robots.txt Disallow is honored by the major crawlers (Google/Bing). Malicious
+  scrapers ignore it, but that's not what this mitigation is for — it's to avoid the
+  URL leaking into search results during the zero-auth window.
 specifications:
-  - "The mailer from-address and to-address are BOTH ENV-driven with real defaults: DORM_GUARD_MAIL_FROM (Slice 3) and DORM_GUARD_ALERT_TO (existing in DowntimeAlertMailer). No hardcoded email addresses in the mailer layer."
-  - "public/robots.txt is a Disallow ALL during the Epic 3 → Epic 4 window. Removing this disallow is an Epic 4 concern, not a mid-flight Epic 3 fix."
+- 'The mailer from-address and to-address are BOTH ENV-driven with real defaults:
+  DORM_GUARD_MAIL_FROM (Slice 3) and DORM_GUARD_ALERT_TO (existing in DowntimeAlertMailer).
+  No hardcoded email addresses in the mailer layer.'
+- public/robots.txt is a Disallow ALL during the Epic 3 → Epic 4 window. Removing
+  this disallow is an Epic 4 concern, not a mid-flight Epic 3 fix.
+deviations_from_plan: 'Extended .env.example with DORM_GUARD_MAIL_FROM per the file
+  header contract — third consecutive slice to do this, same reason as Slices 2A and
+  2B.
 
-deviations_from_plan: >
-  Extended .env.example with DORM_GUARD_MAIL_FROM per the file header contract — third consecutive slice to do this, same reason as Slices 2A and 2B.
+  '
+trade_offs: 'Chose to ship the README deploy-env table in this slice rather than deferring
+  it to the ADR (Slice 5). Reason: the README is the discoverable doc (you land on
+  it via the GitHub front page). The ADR is a decision record for future-me, not an
+  onboarding doc. Putting the table in README and a link-to-README in the ADR keeps
+  each doc in its lane. Cost: the README will drift if someone adds a new env var
+  and forgets to update the table; .env.example is the authoritative schema, README
+  is the narrative.
 
-trade_offs: >
-  Chose to ship the README deploy-env table in this slice rather than
-  deferring it to the ADR (Slice 5). Reason: the README is the
-  discoverable doc (you land on it via the GitHub front page). The
-  ADR is a decision record for future-me, not an onboarding doc.
-  Putting the table in README and a link-to-README in the ADR keeps
-  each doc in its lane. Cost: the README will drift if someone adds
-  a new env var and forgets to update the table; .env.example is the
-  authoritative schema, README is the narrative.
-
+  '
 self_review:
-  consistency: >
-    Matches the Slice 2A/2B text-level spec pattern. The README new
-    section uses the same Deployment environment table shape as the
-    rest of the README (markdown tables, not prose).
-  metz: >
-    ApplicationMailer went from 4 to 4 lines (swapped one string
-    for one ENV.fetch call). Spec is 16 lines total. Nothing to
-    extract.
-  dead_code: "None — the scaffold 'from@example.com' is fully replaced."
-  error_handling: >
-    ENV.fetch with a 'dorm-guard@dorm-guard.com' default means the
-    mailer always has a valid from-address at boot, even if
-    DORM_GUARD_MAIL_FROM is unset. The container boots cleanly but
-    Mailgun will reject sends that don't match a verified domain —
-    fail-loud at send time, not at boot, is the right failure mode
-    for a non-credential setting.
+  consistency: 'Matches the Slice 2A/2B text-level spec pattern. The README new section
+    uses the same Deployment environment table shape as the rest of the README (markdown
+    tables, not prose).
 
+    '
+  metz: 'ApplicationMailer went from 4 to 4 lines (swapped one string for one ENV.fetch
+    call). Spec is 16 lines total. Nothing to extract.
+
+    '
+  dead_code: None — the scaffold 'from@example.com' is fully replaced.
+  error_handling: 'ENV.fetch with a ''dorm-guard@dorm-guard.com'' default means the
+    mailer always has a valid from-address at boot, even if DORM_GUARD_MAIL_FROM is
+    unset. The container boots cleanly but Mailgun will reject sends that don''t match
+    a verified domain — fail-loud at send time, not at boot, is the right failure
+    mode for a non-credential setting.
+
+    '
 confidence: high
 reviewer_attention:
-  - public/robots.txt:6-9   # The Disallow all during the zero-auth window. Verify the Epic 4 → Epic 5 handoff removes this cleanly.
+- public/robots.txt:6-9
