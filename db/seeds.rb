@@ -16,6 +16,16 @@
 # vantage without pointing at loopback or any private range. See the
 # memory file feedback_no_loopback_in_prod_seeds for the rationale.
 
+if Rails.env.production?
+  # Create-only. Subsequent password changes go through the password reset flow.
+  # To rotate password via console: User.find_by(email_address: ENV["ADMIN_EMAIL"])
+  #   &.update!(password: ENV["ADMIN_PASSWORD"])
+  User.find_or_create_by!(email_address: ENV.fetch("ADMIN_EMAIL")) do |u|
+    u.password = ENV.fetch("ADMIN_PASSWORD")
+  end
+  puts "Admin user seeded."
+end
+
 if Rails.env.development?
   Site.find_or_create_by!(name: "Example (always up)") do |site|
     site.url = "https://example.com"
