@@ -1,0 +1,215 @@
+intent: >
+  Add ContentMatchChecker (the fourth and final new check type) that wraps
+  HttpChecker and asserts a pattern appears in the response body, with
+  match-result classification flowing through metadata per decision 3.
+
+slice: 6/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - app/services/content_match_checker.rb
+    - db/migrate/20260414204701_add_content_match_pattern_to_sites.rb
+    - db/schema.rb
+    - app/services/http_checker.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/jobs/perform_check_job.rb
+    - app/components/site_form/type_fields_component.html.erb
+    - app/components/site_form/content_match_fields_component.rb
+    - app/components/site_form/content_match_fields_component.html.erb
+    - app/components/site_form_component.rb
+    - app/controllers/sites_controller.rb
+    - spec/services/content_match_checker_spec.rb
+    - spec/services/http_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+    - spec/components/site_form_component_spec.rb
+  actual:
+    - app/services/content_match_checker.rb
+    - db/migrate/20260414204701_add_content_match_pattern_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - app/services/check_dispatcher.rb
+    - app/jobs/perform_check_job.rb
+    - app/components/site_form/type_fields_component.html.erb
+    - app/components/site_form/content_match_fields_component.rb
+    - app/components/site_form/content_match_fields_component.html.erb
+    - app/components/site_form_component.rb
+    - app/controllers/sites_controller.rb
+    - spec/services/content_match_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+    - spec/components/site_form_component_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/content_match_checker_spec.rb
+    - spec/services/check_dispatcher_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "HttpChecker.check already returns a CheckOutcome with body populated and 1 MiB-truncated (established in Slice 1); ContentMatchChecker can consume it as-is without needing HttpChecker changes"
+  - "The HTTP follow_redirects and expected_status_codes options are deferred to Slice 8; content-match inherits whatever default HttpChecker uses for the current slice (no redirect following, default 200-399 status classification)"
+  - "String#include? handles nil-body safely via body.to_s, returning false when body is nil"
+
+specifications:
+  - "ContentMatchChecker.check(url:, pattern:) takes two primitive args; the dispatcher extracts url and pattern from the Site record"
+  - "ContentMatchChecker passes an HTTP failure (error_message present) through unchanged — content-match inherits transport-level failures"
+  - "ContentMatchChecker sets metadata[:matched] to an explicit true or false; absence is never the signal"
+  - "ContentMatchChecker does NOT set error_message on a match miss — classification stays in the job via metadata[:matched]"
+  - "ContentMatchChecker preserves pattern in metadata[:pattern] for future debugging and for the future 3-state metadata shape in Slice 10"
+  - "PerformCheckJob#derive_status returns :down when result.metadata[:matched] == false, ordered after the error_message check and before the HTTP 200-399 classification"
+  - "The metadata[:matched] check uses explicit == false so HTTP and other check types with an empty metadata hash are unaffected"
+  - "Site validates content_match_pattern presence and length (<= CONTENT_MATCH_PATTERN_MAX = 500) only when check_type is :content_match"
+  - "Site#clear_irrelevant_config nulls content_match_pattern on any non-:content_match save"
+  - "SiteFormComponent labels :content_match as 'HTTP content match' in the check_type select"
+  - "SiteForm::ContentMatchFieldsComponent renders the 1 MiB truncation helper text so the accepted-trade-off is visible to operators in the UI"
+  - "Content-match sites still render the url field (they use HTTP under the hood, the url is required)"
+
+deviations_from_plan: >
+  Plan's Slice 6 text described extending HttpChecker::Result with a body
+  field "in this slice" — but body was already added in Slice 1 when the
+  CheckOutcome value object was established. Slice 6's ContentMatchChecker
+  uses body as-is, no HttpChecker changes needed. Not a drift concern,
+  just a plan-text artifact from an earlier draft.
+
+  Plan's Slice 6 text also mentioned ContentMatchChecker accepting
+  follow_redirects and expected_status_codes kwargs that forward to
+  HttpChecker. Those options don't exist until Slice 8 — deferred to
+  Slice 8's retrofit.
+
+trade_offs: >
+  metadata[:matched] as the contract rather than setting error_message
+  on a miss. Cost: the job has a third branch in derive_status that
+  knows about the key name. Benefit: per decision 3, classification
+  lives in the job, and metadata is the correct shape for "raw signals
+  the checker produces". The alternative (error_message populated on
+  miss) would move classification into the checker and violate the rule.
+  Slice 10 will extend this pattern when SSL adds metadata[:classification]
+  for 3-state.
+
+  String#include? against the full 1 MiB body on every check. Cost:
+  O(n) memory scan per check, worst case 1 MiB. Benefit: the simplest
+  possible match, no regex compilation cost, no ReDoS risk. The 60s
+  cadence makes the CPU cost trivial. If operators need regex matching
+  later it's a separate follow-up.
+
+  Truncation false-negative (pattern beyond 1 MiB never matches) is
+  surfaced in the form helper text rather than hidden. Operators see
+  the limit before they configure the check.
+
+interfaces:
+  consumed:
+    - "HttpChecker.check(url) -> CheckOutcome"
+    - "CheckOutcome.new(status_code:, response_time_ms:, error_message:, checked_at:, body:, metadata:) -> CheckOutcome"
+    - "Site#check_type -> String"
+    - "Site#content_match_pattern -> String | nil"
+    - "Site#url -> String"
+  published:
+    - "ContentMatchChecker.check(url:, pattern:) -> CheckOutcome"
+    - "CheckDispatcher.call(site) -> CheckOutcome | raises CheckDispatcher::UnknownCheckType"
+    - "Site#content_match? -> Boolean"
+    - "Site#content_match_pattern= (string writer)"
+    - "Site::CONTENT_MATCH_PATTERN_MAX -> 500"
+    - "SiteForm::ContentMatchFieldsComponent.new(form:, site:) -> component"
+
+self_review:
+  tests: >
+    Added spec/services/content_match_checker_spec.rb with 6 cases: matching
+    body → matched true, non-matching body → matched false with no error_message,
+    transport failure passes through, empty body → matched false, nil body →
+    matched false (nil-safe via to_s), pattern stored in metadata. Extended
+    check_dispatcher_spec.rb with a :content_match dispatch case asserting the
+    url+pattern translation from the Site record. Added two job spec cases:
+    metadata[:matched] = false → site goes down, metadata[:matched] = true →
+    site goes up. Extended site_spec.rb with content_match_pattern validation
+    (presence, length), and added a clear_irrelevant_config case for flipping
+    content_match back to http. Extended site_form_component_spec.rb with a
+    :content_match rendering context (pattern input, helper text, url still
+    present). Added new_content_match_site preview variant.
+  consistency: >
+    ContentMatchChecker follows the Slice 4/5 pattern of class-method entrypoint,
+    single same-named instance method, private helpers — except it has no private
+    helpers beyond what's needed because the happy path is a single expression.
+    The metadata[:matched] contract mirrors the pattern Slice 10 will use for
+    SSL metadata[:classification]. The SiteForm::ContentMatchFieldsComponent
+    class body is identical to the other SiteForm:: leaf components (same
+    initialize, attr_reader, field_error helper) — noted in Slice 5 as a
+    base-class refactor candidate, deferred to a follow-up issue.
+  metz: >
+    Measured. content_match_checker.rb is 35 lines, 2 public methods (self.check
+    1 body line, check 10 body lines because of the branching on HTTP failure
+    then the metadata construction). The 10-line check method is over Metz's
+    5-line rule but kept as one method — splitting it into "inherit_failure"
+    and "build_match_outcome" helpers would obscure the single happy-path
+    expression. site.rb is now 73 lines with a fifth scrub line in
+    clear_irrelevant_config. check_dispatcher.rb 34 lines. site_form_component.html.erb
+    stayed roughly level — ContentMatchFieldsComponent is rendered through
+    the dispatcher so the shell didn't grow.
+  duplication: >
+    Five SiteForm:: leaf components now share the same 9-line class body
+    (initialize + attr_reader + field_error helper). Extraction to a
+    SiteForm::FieldsComponent base class is justified by repetition and
+    filed as a follow-up — a base class with one optional override method
+    for the field_error helper would cut ~40 lines of boilerplate across
+    the five leaves. Not done in this slice to avoid mid-epic refactor.
+  mocking: >
+    content_match_checker_spec mocks HttpChecker.check — owned internal
+    code. No external network touched. CheckOutcome fixtures are
+    constructed directly (owned value object).
+  error_paths: >
+    HTTP failure inheritance is the primary error path. ContentMatchChecker
+    returns the HTTP outcome unchanged when error_message.present? — no
+    wrapping, no new error types. The match miss case is not an error
+    (error_message stays nil); the job derives :down from metadata.
+  security: >
+    The SsrfGuard protection is inherited through HttpChecker — ContentMatchChecker
+    never touches Faraday or sockets directly. The 500-character pattern
+    limit prevents trivially large input from bloating check configs; the
+    1 MiB body truncation prevents memory exhaustion from a malicious server
+    returning enormous bodies. No regex compilation, no ReDoS risk.
+  performance: >
+    One extra String#include? call per HTTP content-match check. Scales
+    with body length (O(n * m) worst case where n is body bytes and m is
+    pattern length), bounded by 1 MiB body and 500-char pattern. A single
+    check runs in milliseconds; a 60s cadence per site is nowhere near
+    saturating.
+  api: >
+    Additive. ContentMatchChecker is new. Site#content_match?,
+    Site#content_match_pattern, Site::CONTENT_MATCH_PATTERN_MAX are new.
+    CheckDispatcher gains a fifth branch. PerformCheckJob#derive_status
+    gains one new line. Existing :http/:ssl/:tcp/:dns sites are unaffected
+    because their metadata never has a [:matched] key so the == false
+    check is always false for them.
+  dead_code: >
+    None. ContentMatchChecker consumes HttpChecker.check, pattern lives on
+    the Site, the form component is rendered via the dispatcher.
+
+confidence: high
+reviewer_attention:
+  - "app/services/content_match_checker.rb:22-35"  # the happy path + passthrough for HTTP failure
+  - "app/jobs/perform_check_job.rb:40-46"  # derive_status order: error_message -> matched -> nil status_code -> HTTP range
+  - "app/models/site.rb:58-66"  # clear_irrelevant_config is now scrubbing 5 columns; size is approaching a refactor trigger
