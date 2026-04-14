@@ -86,5 +86,33 @@ RSpec.describe HttpChecker do
         expect(described_class.check(url).status_code).to eq(200)
       end
     end
+
+    context "with a non-http(s) scheme (service-level defence-in-depth)" do
+      it "rejects ftp:// and reports the unsupported scheme" do
+        result = described_class.check("ftp://example.com")
+        expect(result.status_code).to be_nil
+        expect(result.error_message).to include("Unsupported scheme: ftp")
+      end
+
+      it "rejects javascript: scheme" do
+        result = described_class.check("javascript:alert(1)")
+        expect(result.status_code).to be_nil
+        expect(result.error_message).to be_present
+      end
+    end
+
+    context "with a URL targeting a private IP (SSRF guard)" do
+      it "returns an error result without making a TCP connection" do
+        result = described_class.check("http://127.0.0.1/admin")
+        expect(result.status_code).to be_nil
+        expect(result.error_message).to match(/blocked/i)
+      end
+
+      it "blocks cloud metadata endpoint 169.254.169.254" do
+        result = described_class.check("http://169.254.169.254/latest/meta-data/")
+        expect(result.status_code).to be_nil
+        expect(result.error_message).to match(/blocked/i)
+      end
+    end
   end
 end
