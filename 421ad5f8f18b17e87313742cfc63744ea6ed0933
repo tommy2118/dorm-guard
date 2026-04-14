@@ -1,0 +1,60 @@
+slice: "4/4"
+intent: >-
+  Pin the Site model's http/https URL whitelist against injection schemes
+  (javascript:, data:, file:, ftp:) as a regression lock — verified the
+  existing validator already blocks them; spec ensures future refactors
+  cannot silently widen the allowlist.
+plan: delegated-crunching-crescent
+confidence: high
+reversibility: trivial
+
+scope:
+  declared:
+    - spec/models/site_spec.rb
+  actual:
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: "bin/dc bundle exec rspec"
+  result: green
+  failing: 0
+  total: 213
+
+tests:
+  needed: "yes"
+  added:
+    - "spec/models/site_spec.rb — 4 parameterized examples (javascript:, data:, file:, ftp:)"
+
+lint:
+  skipped: true
+  rationale: "spec-only slice, no rubocop-material changes"
+
+assumptions:
+  - "URI::DEFAULT_PARSER.make_regexp(%w[http https]) rejects all four injection schemes — verified in container before writing specs"
+  - "No Site.url validation patch needed because the existing format: validator already covers these cases"
+
+specifications:
+  - "javascript:, data:, file:, ftp: schemes must remain invalid for Site#url"
+  - "Violation of this spec = the http/https whitelist was widened — intentional deviations need a companion spec update"
+
+trade_offs:
+  - "Parameterized loop style in specs: slightly less explicit but prevents copy-paste drift across 4 similar cases"
+
+deviations_from_plan: none
+
+self_review:
+  tests: "4 regression examples added; each tests a distinct injection scheme against the model boundary"
+  consistency: "Matches existing spec pattern — described_class.new(valid_attrs.merge(...))"
+  metz: "No source files changed; spec additions are 9 lines total"
+  duplication: "Parameterized loop avoids 4 copy-paste examples"
+  mocking: "No mocking"
+  error_paths: "N/A — validation spec, not error handling"
+  security: "This slice IS the security concern — injection scheme lock"
+
+interfaces:
+  consumed:
+    - "Site#valid? — checked against http/https format regexp"
+  published: []
+
+reviewer_attention: []
