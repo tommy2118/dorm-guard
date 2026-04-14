@@ -4,7 +4,7 @@ class PerformCheckJob < ApplicationJob
   def perform(site_id)
     site = Site.find(site_id)
     previous_status = site.status
-    result = HttpChecker.check(site.url)
+    result = CheckDispatcher.call(site)
     apply_result(site, result)
     notify_if_newly_down(site, previous_status)
   end

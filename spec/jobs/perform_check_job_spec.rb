@@ -17,11 +17,11 @@ RSpec.describe PerformCheckJob, type: :job do
   end
 
   before do
-    allow(HttpChecker).to receive(:check).with(site.url).and_return(result)
+    allow(CheckDispatcher).to receive(:call).with(site).and_return(result)
   end
 
   describe "#perform" do
-    it "creates a CheckResult from the HttpChecker response" do
+    it "creates a CheckResult from the dispatched checker response" do
       expect { described_class.perform_now(site.id) }.to change(CheckResult, :count).by(1)
 
       check = CheckResult.last
@@ -149,7 +149,7 @@ RSpec.describe PerformCheckJob, type: :job do
     end
 
     context "when status flips from unknown to down (first ever check)" do
-      before { allow(HttpChecker).to receive(:check).with(site.url).and_return(down_result) }
+      before { allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result) }
 
       it "enqueues a DowntimeAlertMailer.site_down delivery for the site" do
         expect { described_class.perform_now(site.id) }
@@ -160,7 +160,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when status flips from up to down" do
       before do
         site.update!(status: :up)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(down_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
       end
 
       it "enqueues a DowntimeAlertMailer.site_down delivery" do
@@ -172,7 +172,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when the site was already down (down→down)" do
       before do
         site.update!(status: :down)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(down_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
       end
 
       it "does NOT enqueue another alert (no spam)" do
@@ -184,7 +184,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when status flips from down to up (recovery)" do
       before do
         site.update!(status: :down)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(up_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(up_result)
       end
 
       it "does NOT enqueue an alert (no recovery emails in this slice)" do
@@ -196,7 +196,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when the site stays up (up→up)" do
       before do
         site.update!(status: :up)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(up_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(up_result)
       end
 
       it "does NOT enqueue an alert" do

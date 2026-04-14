@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_14_124520) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_14_171235) do
   create_table "check_results", force: :cascade do |t|
     t.datetime "checked_at", null: false
     t.datetime "created_at", null: false
@@ -33,6 +33,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_14_124520) do
   end
 
   create_table "sites", force: :cascade do |t|
+    t.integer "check_type", default: 0, null: false
     t.datetime "created_at", null: false
     t.integer "interval_seconds", null: false
     t.datetime "last_checked_at"

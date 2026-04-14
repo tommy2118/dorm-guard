@@ -105,6 +105,58 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "check_type enum" do
+    it "defaults to http" do
+      expect(described_class.new(valid_attrs).check_type).to eq("http")
+    end
+
+    it "accepts all declared check types" do
+      %w[http ssl tcp dns content_match].each do |type|
+        site = described_class.new(valid_attrs.merge(check_type: type))
+        expect(site.check_type).to eq(type)
+      end
+    end
+
+    it "exposes predicate methods for each type" do
+      site = described_class.new(valid_attrs)
+      expect(site).to be_http
+      expect(site).not_to be_ssl
+    end
+  end
+
+  describe "health predicates" do
+    let(:site) { described_class.new(valid_attrs) }
+
+    it "is healthy when up" do
+      site.status = :up
+      expect(site).to be_healthy
+      expect(site).not_to be_failing
+    end
+
+    it "is failing when down" do
+      site.status = :down
+      expect(site).to be_failing
+      expect(site).not_to be_healthy
+    end
+
+    it "is neither healthy nor failing when unknown" do
+      expect(site).not_to be_healthy
+      expect(site).not_to be_failing
+    end
+  end
+
+  describe "clear_irrelevant_config callback seam" do
+    # The callback is wired in Slice 2 as a no-op. Later slices extend it
+    # to null out columns that don't apply to the current check_type. This
+    # spec pins the wiring — if a later slice accidentally drops the
+    # `before_validation :clear_irrelevant_config` line, this fails.
+    it "runs the callback on validation" do
+      site = described_class.new(valid_attrs)
+      expect(site).to receive(:clear_irrelevant_config).and_call_original
+      site.valid?
+    end
+  end
+
   describe "#due?" do
     it "is true when the site has never been checked" do
       site = described_class.new(valid_attrs.merge(last_checked_at: nil))
