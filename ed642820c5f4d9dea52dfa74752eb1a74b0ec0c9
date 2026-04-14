@@ -1,0 +1,109 @@
+intent: >
+  Add a `deploy` job to .github/workflows/ci.yml that auto-deploys
+  to dorm-guard.com after every green push to main, so Slice 9's
+  PR merge becomes the integration test for the CI deploy path.
+
+slice: 9/9
+kind: feature
+behavior_change: additive
+reversibility: reversible
+
+scope:
+  declared:
+    - .github/workflows/ci.yml
+    - docs/decisions/pr-0021-kamal-deploy.md
+  actual:
+    - .github/workflows/ci.yml
+    - docs/decisions/pr-0021-kamal-deploy.md
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+0 (no Ruby code touched)"
+
+tests:
+  needed: "no"
+  rationale: >
+    Workflow-only change. Ruby test suite stays at 171/171. The
+    real verification for this slice is running the workflow on
+    GitHub's infra — which happens after Slice 9 merges to main.
+
+verification:
+  tested:
+    - "bin/dc bundle exec rspec — 171/171 green (unchanged from Slice 7)"
+  manual:
+    - "Re-read .github/workflows/ci.yml to confirm the existing job names (scan_ruby, scan_js, lint, test, system-test) — unchanged from Slice 4's exploration"
+    - "YAML-parsed the updated workflow via Ruby: 6 jobs total, deploy.needs has 5 entries matching the gate names exactly, deploy.if gating string is correct"
+    - "11 steps in the deploy job, in the expected order (checkout → Ruby → buildx → doctl → registry login → ssh-agent → known_hosts → .env → master.key → kamal deploy → smoke check)"
+
+assumptions:
+  - "webfactory/ssh-agent@v0.9.0 is the stable action for loading private SSH keys into the runner's ssh-agent. Widely used, maintained."
+  - "digitalocean/action-doctl@v2 is the official DO action for installing doctl in a runner. Pins doctl to a recent-enough version to support `registry login`."
+  - "docker/setup-buildx-action@v3 is the standard buildx setup action. kamal's local build step relies on buildx for cross-platform images; the GH runner is amd64 and the production image target is amd64, so this is technically unnecessary for THIS deploy, but leaving it in means adding a second-arch server later works without workflow changes."
+  - "The operator will provision the six required GH repo secrets BEFORE merging to main — otherwise the first post-merge push triggers a deploy that fails at the first secret reference. ADR Slice 8 section lists exact `gh secret set` commands."
+  - "DO hasn't rotated the droplet IP (104.236.125.236) since Slice 6. If the droplet is recreated, both config/deploy.yml:servers.web AND the ssh-keyscan line in this workflow need updating in lockstep."
+
+specifications:
+  - "Deploy gating is triple-anded: push + main branch + all 5 CI gates green. Missing any one → silently skipped, not errored."
+  - "concurrency.group=deploy-production with cancel-in-progress: false serializes deploys. Two fast main pushes queue rather than race on the SQLite volume."
+  - "CI writes .env + config/master.key on the runner, not in the repo. Both files are gitignored (config/master.key via Rails scaffold; .env via the !/.env.example negation from Slice 1)."
+  - "CI should NEVER reuse the operator's personal SSH keys. The ADR's provisioning commands generate a fresh ed25519 keypair for CI and only install that public half on the droplet."
+
+deviations_from_plan: >
+  None. Slice 8 was planned as "append deploy job to ci.yml or new deploy.yml", and I chose the append path for the cross-job `needs:` benefits. Job names in `needs:` were re-verified against the current ci.yml file per the Slice 8 pre-flight rule.
+
+trade_offs: >
+  Chose append-to-ci.yml over a separate deploy.yml with
+  workflow_run. Pros: stronger `needs:` semantics, single
+  workflow file to review. Cons: longer ci.yml. The long file
+  is the right trade for a single-operator MVP.
+
+  Chose to write .env from secrets instead of exporting env
+  vars directly. Pros: .kamal/secrets' .env sourcing code path
+  works identically on laptop and CI — one codepath, fewer
+  surprises. Cons: a .env file briefly exists on the runner's
+  filesystem (deleted when the runner is torn down after the
+  job completes).
+
+  Chose to write config/master.key from a secret instead of
+  passing RAILS_MASTER_KEY as an env var. Same reason as above:
+  symmetric code path with the laptop flow. .kamal/secrets
+  already has the `cat config/master.key` line.
+
+  Chose webfactory/ssh-agent@v0.9.0 over shimmercat/setup-ssh
+  or inline `echo "$KEY" > ~/.ssh/id_ed25519; chmod 600 ...`.
+  The action abstracts the ssh-agent loading, handles chmod
+  correctly, and is widely used. Inline would work but adds
+  boilerplate.
+
+  Chose to include a post-deploy smoke check (curl /up with
+  retry loop) instead of trusting kamal's health check alone.
+  Kamal's health check runs INSIDE the container network; a
+  curl from the GH runner tests the full public internet
+  path including kamal-proxy's TLS termination. Defense in
+  depth at the cost of 5-25 seconds on successful deploys.
+
+self_review:
+  consistency: >
+    Matches the workflow style already in ci.yml (indent, naming,
+    action versions). The new steps follow the same
+    "- name: ..." format as existing jobs.
+  completeness: >
+    The deploy covers the full path from merge to main to a
+    publicly-reachable /up. It doesn't handle rollback automatically
+    — the ADR has the manual `kamal rollback` runbook for that.
+    Auto-rollback on failed smoke is a future improvement.
+  security: >
+    All six secrets are read via `${{ secrets.NAME }}` references,
+    never printed or echoed. The `.env` write step uses a heredoc
+    to avoid shell injection. The dedicated KAMAL_SSH_KEY (not a
+    personal device key) limits the blast radius of a compromised
+    CI runner to one scoped CI key that can be rotated without
+    touching the operator's laptop config.
+
+confidence: high
+reviewer_attention:
+  - .github/workflows/ci.yml:133-223   # The new deploy job. Verify the `needs:` list matches exactly the job names above and the `if:` gating string compiles correctly in GitHub Actions expression syntax. Specifically — the conjunction `github.ref == 'refs/heads/main' && github.event_name == 'push'` is the exact idiom GitHub recommends; `github.event.ref` is different and wrong for push events.
+  - .github/workflows/ci.yml:197-200   # The ssh-keyscan line with the hardcoded droplet IP. This is the second place in the repo where 104.236.125.236 is hardcoded (the first is config/deploy.yml:servers.web). Changing the droplet IP means updating both.
