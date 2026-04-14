@@ -1,0 +1,90 @@
+intent: >
+  Block SSRF attacks at the HTTP client boundary: SsrfGuard Faraday middleware
+  rejects requests to private/loopback/link-local IP space before any TCP
+  connection is attempted; HttpChecker gains a scheme whitelist as defence-in-depth.
+
+slice: 3/4
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/services/ssrf_guard.rb
+    - app/services/http_checker.rb
+    - spec/services/ssrf_guard_spec.rb
+    - spec/services/http_checker_spec.rb
+  actual:
+    - app/services/ssrf_guard.rb
+    - app/services/http_checker.rb
+    - spec/services/ssrf_guard_spec.rb
+    - spec/services/http_checker_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+22 examples (18 SsrfGuard + 4 HttpChecker)"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/ssrf_guard_spec.rb
+    - spec/services/http_checker_spec.rb
+  rationale: >
+    ssrf_guard_spec.rb: 18 examples covering literal IPv4/IPv6, RFC 1918,
+    link-local, carrier-grade NAT, benchmark ranges, NXDOMAIN, multi-IP
+    split-horizon, unparsable resolved address, and legitimate passthrough.
+    http_checker_spec.rb: 4 new examples for ftp/javascript scheme rejection
+    and 127.0.0.1/169.254.169.254 SSRF blocking through the full stack.
+
+assumptions:
+  - "Faraday 2.x env.url.hostname strips brackets from IPv6 literals (e.g. [::1] -> ::1)"
+  - "Resolv.getaddresses is the correct stdlib API for all-record DNS resolution in Ruby 4.0"
+  - "The Faraday :test adapter bypasses WebMock (different stack layer) — verified by passing passthrough test"
+
+specifications:
+  - "SSRF guard fails closed on NXDOMAIN (empty Resolv result -> BlockedIpError)"
+  - "SSRF guard fails closed on unparsable resolved addresses (IPAddr::InvalidAddressError -> BlockedIpError)"
+  - "Multi-IP resolution: any blocked address in the resolved set blocks the request (split-horizon guard)"
+  - "Literal IP fast path: blocked_literal_ip? short-circuits before Resolv.getaddresses is called"
+  - "BlockedIpError < Faraday::Error — caught by existing rescue in HttpChecker#check"
+  - "HttpChecker rejects non-http(s) schemes before creating a Faraday connection"
+  - "SsrfGuard must precede any redirect middleware in the Faraday stack (noted in code comment)"
+
+deviations_from_plan: none
+
+trade_offs: >
+  Stubbing Resolv.getaddresses in specs rather than allowing real DNS resolution.
+  Cost: test isolation from real DNS behaviour. Benefit: deterministic tests,
+  no flakiness from network, no dependency on external resolvers in CI.
+  Alternative considered: WebMock DNS stubbing (not applicable — WebMock operates
+  at Net::HTTP, not Resolv level).
+
+interfaces:
+  consumed:
+    - "Faraday::Middleware (Faraday ~2.0 — base class for the middleware)"
+    - "HttpChecker::Result (Data.define — returned by check)"
+  published:
+    - "SsrfGuard::BlockedIpError < Faraday::Error"
+    - "SsrfGuard#call(env) — Faraday middleware contract"
+
+self_review:
+  metz: >
+    ssrf_guard.rb: 72 lines including comments. blocked_literal_ip? is 5 lines,
+    block! is 6 lines (one rescue clause). All within limits.
+  security: >
+    DNS rebinding non-goal documented in code comment and plan. No path-string
+    branching. Fail-closed on all error cases. BlockedIpError subclasses
+    Faraday::Error so no unhandled exceptions escape to the job layer.
+  consistency: >
+    Middleware pattern (f.use SsrfGuard) is idiomatic Faraday 2.x. rescue
+    Faraday::Error in HttpChecker already covers the new subclass — zero
+    changes to the rescue clause.
+
+confidence: high
+reviewer_attention:
+  - "app/services/ssrf_guard.rb:48-55 — block! raises on IPAddr::InvalidAddressError rather than skipping; verify this is the correct fail-closed behaviour for your threat model"
+  - "app/services/ssrf_guard.rb:38-40 — fc00::/7 covers both fc00::/8 and fd00::/8; double-check the prefix length covers the intended ULA range"
