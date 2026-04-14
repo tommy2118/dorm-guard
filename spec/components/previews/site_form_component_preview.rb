@@ -15,6 +15,12 @@ class SiteFormComponentPreview < ViewComponent::Preview
     render(SiteFormComponent.new(site: Site.new(check_type: :dns, dns_hostname: "example.com")))
   end
 
+  def new_content_match_site
+    render(SiteFormComponent.new(
+      site: Site.new(check_type: :content_match, content_match_pattern: "Welcome")
+    ))
+  end
+
   def with_errors
     site = Site.new(name: "", url: "not-a-url", interval_seconds: 10)
     site.valid?

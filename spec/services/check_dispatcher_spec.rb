@@ -77,6 +77,26 @@ RSpec.describe CheckDispatcher do
       end
     end
 
+    context "with a :content_match site" do
+      let(:content_match_site) do
+        Site.create!(
+          name: "Homepage",
+          url: "https://example.com",
+          interval_seconds: 60,
+          check_type: :content_match,
+          content_match_pattern: "Welcome"
+        )
+      end
+
+      it "dispatches to ContentMatchChecker.check with url and pattern" do
+        expect(ContentMatchChecker).to receive(:check)
+          .with(url: "https://example.com", pattern: "Welcome")
+          .and_return(outcome)
+
+        expect(described_class.call(content_match_site)).to eq(outcome)
+      end
+    end
+
     context "with an unrouted check_type" do
       let(:phantom_site) { instance_double(Site, check_type: "phantom", url: "https://example.com") }
 

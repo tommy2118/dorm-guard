@@ -3,7 +3,8 @@ class SiteFormComponent < ApplicationComponent
     "http" => "HTTP",
     "ssl" => "SSL certificate expiry",
     "tcp" => "TCP port",
-    "dns" => "DNS resolution"
+    "dns" => "DNS resolution",
+    "content_match" => "HTTP content match"
   }.freeze
 
   def initialize(site:)

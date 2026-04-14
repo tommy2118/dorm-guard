@@ -2,6 +2,7 @@ class Site < ApplicationRecord
   MIN_INTERVAL_SECONDS = 30
   DEFAULT_TLS_PORT = 443
   DEFAULT_TCP_PORT = 80
+  CONTENT_MATCH_PATTERN_MAX = 500
 
   DNS_HOSTNAME_REGEX = /\A[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\z/i
 
@@ -36,6 +37,10 @@ class Site < ApplicationRecord
             format: { with: DNS_HOSTNAME_REGEX },
             length: { maximum: 253 },
             if: :dns?
+  validates :content_match_pattern,
+            presence: true,
+            length: { maximum: CONTENT_MATCH_PATTERN_MAX },
+            if: :content_match?
 
   def due?
     last_checked_at.nil? || last_checked_at <= interval_seconds.seconds.ago
@@ -55,6 +60,7 @@ class Site < ApplicationRecord
     self.tls_port = nil unless ssl?
     self.tcp_port = nil unless tcp?
     self.dns_hostname = nil unless dns?
+    self.content_match_pattern = nil unless content_match?
     self.url = nil if dns?
   end
 end

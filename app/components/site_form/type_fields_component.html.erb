@@ -5,4 +5,6 @@
   <%= render(SiteForm::TcpFieldsComponent.new(form: form, site: site)) %>
 <% when "dns" %>
   <%= render(SiteForm::DnsFieldsComponent.new(form: form, site: site)) %>
+<% when "content_match" %>
+  <%= render(SiteForm::ContentMatchFieldsComponent.new(form: form, site: site)) %>
 <% end %>

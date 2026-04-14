@@ -117,6 +117,26 @@ RSpec.describe SiteFormComponent, type: :component do
     end
   end
 
+  describe "rendering for a new :content_match site" do
+    before do
+      with_request_url "/sites/new" do
+        render_inline(described_class.new(site: Site.new(check_type: :content_match)))
+      end
+    end
+
+    it "renders the content_match_pattern input" do
+      expect(page).to have_css("input[name='site[content_match_pattern]']")
+    end
+
+    it "renders the 1 MiB truncation helper text" do
+      expect(page).to have_text(/first 1 MiB/)
+    end
+
+    it "still renders the url field (content-match uses HTTP under the hood)" do
+      expect(page).to have_css("input[name='site[url]']")
+    end
+  end
+
   describe "rendering with validation errors" do
     it "renders inline errors and input-error classes for invalid fields" do
       invalid_site = Site.new(name: "", url: "not-a-url", interval_seconds: 10)

@@ -145,6 +145,31 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "content_match_pattern validation" do
+    let(:cm_attrs) do
+      valid_attrs.merge(check_type: :content_match, content_match_pattern: "Hello")
+    end
+
+    it "is valid for a :content_match site with a pattern" do
+      expect(described_class.new(cm_attrs)).to be_valid
+    end
+
+    it "requires content_match_pattern when check_type is :content_match" do
+      site = described_class.new(cm_attrs.merge(content_match_pattern: nil))
+      expect(site).not_to be_valid
+      expect(site.errors[:content_match_pattern]).to be_present
+    end
+
+    it "rejects a content_match_pattern longer than the configured max" do
+      site = described_class.new(cm_attrs.merge(content_match_pattern: "x" * (Site::CONTENT_MATCH_PATTERN_MAX + 1)))
+      expect(site).not_to be_valid
+    end
+
+    it "does not require content_match_pattern for an :http site" do
+      expect(described_class.new(valid_attrs.merge(check_type: :http))).to be_valid
+    end
+  end
+
   describe "dns_hostname validation and url relaxation" do
     let(:dns_attrs) { { name: "DNS", check_type: :dns, dns_hostname: "example.com", interval_seconds: 60 } }
 
@@ -277,6 +302,14 @@ RSpec.describe Site, type: :model do
       )
       site.update!(check_type: :http, url: "https://example.com")
       expect(site.reload.dns_hostname).to be_nil
+    end
+
+    it "nulls content_match_pattern when flipping from :content_match to :http" do
+      site = described_class.create!(
+        valid_attrs.merge(check_type: :content_match, content_match_pattern: "Welcome")
+      )
+      site.update!(check_type: :http)
+      expect(site.reload.content_match_pattern).to be_nil
     end
   end
 

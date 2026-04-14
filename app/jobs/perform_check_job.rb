@@ -37,6 +37,7 @@ class PerformCheckJob < ApplicationJob
 
   def derive_status(result)
     return :down if result.error_message.present?
+    return :down if result.metadata[:matched] == false # content-match miss
     return :up if result.status_code.nil? # non-HTTP checks signal success via nil error_message
 
     result.status_code.between?(200, 399) ? :up : :down

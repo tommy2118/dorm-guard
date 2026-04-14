@@ -97,6 +97,42 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when a content-match check reports matched: false" do
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 42,
+          error_message: nil,
+          checked_at: checked_at,
+          body: "hello",
+          metadata: { matched: false, pattern: "welcome" }
+        )
+      end
+
+      it "marks the site as down even though HTTP returned 200" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_down
+      end
+    end
+
+    context "when a content-match check reports matched: true" do
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 42,
+          error_message: nil,
+          checked_at: checked_at,
+          body: "welcome aboard",
+          metadata: { matched: true, pattern: "welcome" }
+        )
+      end
+
+      it "marks the site as up" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_up
+      end
+    end
+
     context "when the check succeeds with nil status_code (non-HTTP check type)" do
       let(:result) do
         CheckOutcome.new(

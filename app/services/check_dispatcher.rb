@@ -26,6 +26,8 @@ class CheckDispatcher
       TcpChecker.check(host: URI.parse(site.url).host, port: site.tcp_port)
     when "dns"
       DnsChecker.check(hostname: site.dns_hostname)
+    when "content_match"
+      ContentMatchChecker.check(url: site.url, pattern: site.content_match_pattern)
     else
       raise UnknownCheckType, site.check_type
     end
