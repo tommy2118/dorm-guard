@@ -72,6 +72,10 @@ RSpec.configure do |config|
   # To enable this behaviour uncomment the line below.
   # config.infer_spec_type_from_file_location!
 
+  # Auth helpers (sign_in_as) for request specs.
+  require "support/auth_helpers"
+  config.include AuthHelpers, type: :request
+
   # ViewComponent test helpers (render_inline, etc.) for component specs.
   config.include ViewComponent::TestHelpers, type: :component
 

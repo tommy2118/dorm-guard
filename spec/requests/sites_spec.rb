@@ -1,13 +1,7 @@
 require "rails_helper"
 
 RSpec.describe "Sites", type: :request do
-  # Inline sign-in helper — extracted to spec/support/auth_helpers.rb in Slice 2.
-  let(:password) { "a_secure_passphrase_16" }
-  let(:user) { User.create!(email_address: "test@example.com", password: password, password_confirmation: password) }
-
-  def sign_in_as(u, pw = password)
-    post session_path, params: { email_address: u.email_address, password: pw }
-  end
+  let(:user) { User.create!(email_address: "test@example.com", password: "a_secure_passphrase_16", password_confirmation: "a_secure_passphrase_16") }
 
   before { sign_in_as(user) }
 
