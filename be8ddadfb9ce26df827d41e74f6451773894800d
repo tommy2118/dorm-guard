@@ -1,76 +1,84 @@
-intent: >
-  Verify the production Dockerfile already bundles tailwind.css into
-  the image (via tailwindcss-rails railtie hooking into
-  assets:precompile) and seed .env.example as the shared deploy-
-  contract file that later Kamal-deploy slices extend.
+intent: 'Verify the production Dockerfile already bundles tailwind.css into the image
+  (via tailwindcss-rails railtie hooking into assets:precompile) and seed .env.example
+  as the shared deploy- contract file that later Kamal-deploy slices extend.
 
+  '
 slice: 1/9
 kind: chore
 behavior_change: none
 reversibility: trivial
-
 scope:
   declared:
-    - Dockerfile
-    - .env.example
+  - Dockerfile
+  - ".env.example"
+  - ".gitignore"
   actual:
-    - .env.example
-    - .gitignore
-  drift:
-    - .gitignore
-
+  - ".env.example"
+  - ".gitignore"
+  drift: []
 proof:
   tests_run: bin/dc bundle exec rspec
   result: green
   failing: 0
   coverage_delta: "+0.0%"
-
 tests:
-  needed: "no"
-  rationale: >
-    Zero code changes. Verification is external to rspec — it's a
-    docker build + image inspection. The suite was still run as a
-    sanity gate and is 131/131 green; no new specs would add value.
+  needed: 'no'
+  rationale: 'Zero code changes. Verification is external to rspec — it''s a docker
+    build + image inspection. The suite was still run as a sanity gate and is 131/131
+    green; no new specs would add value.
 
+    '
 verification:
   tested:
-    - "Full rspec suite (131 examples, 0 failures)"
+  - Full rspec suite (131 examples, 0 failures)
   manual:
-    - "docker build -t dorm_guard:slice1-verify . (exit 0, stage #19 logged: 'tailwindcss v4.2.2' and 'Writing tailwind-2ee7590c.css')"
-    - "docker run --rm dorm_guard:slice1-verify ls app/assets/builds/tailwind.css — present, 1,140,062 bytes"
-    - "docker run --rm dorm_guard:slice1-verify grep tailwind public/assets/.manifest.json — maps tailwind.css -> tailwind-2ee7590c.css"
-
+  - 'docker build -t dorm_guard:slice1-verify . (exit 0, stage #19 logged: ''tailwindcss
+    v4.2.2'' and ''Writing tailwind-2ee7590c.css'')'
+  - docker run --rm dorm_guard:slice1-verify ls app/assets/builds/tailwind.css — present,
+    1,140,062 bytes
+  - docker run --rm dorm_guard:slice1-verify grep tailwind public/assets/.manifest.json
+    — maps tailwind.css -> tailwind-2ee7590c.css
 assumptions:
-  - "tailwindcss-rails 4.4.0's railtie hook into assets:precompile is stable and will keep auto-running tailwindcss:build under future gem patches (observed working, but not contractually guaranteed by the gem's API)"
-  - "The base image `ruby:4.0.0-slim` on the operator's laptop and the Kamal-built image behave identically for this precompile step — local build is on arm64, production is amd64; tailwindcss-ruby ships pre-built binaries for both"
-  - "The CI fix from commit ae788ff (explicit bin/rails tailwindcss:build before rspec) applies to the RAILS_ENV=test path where assets:precompile is not invoked; it does not indicate that production `assets:precompile` is broken"
-
+- tailwindcss-rails 4.4.0's railtie hook into assets:precompile is stable and will
+  keep auto-running tailwindcss:build under future gem patches (observed working,
+  but not contractually guaranteed by the gem's API)
+- The base image `ruby:4.0.0-slim` on the operator's laptop and the Kamal-built image
+  behave identically for this precompile step — local build is on arm64, production
+  is amd64; tailwindcss-ruby ships pre-built binaries for both
+- The CI fix from commit ae788ff (explicit bin/rails tailwindcss:build before rspec)
+  applies to the RAILS_ENV=test path where assets:precompile is not invoked; it does
+  not indicate that production `assets:precompile` is broken
 specifications:
-  - ".env.example is the single source of truth for the set of env vars the production deploy requires. A deploy var added to config/deploy.yml or .kamal/secrets without a corresponding line in .env.example is a process violation."
-  - "Slice 1 only lists vars already consumed by the current codebase (RAILS_MASTER_KEY, DORM_GUARD_ALERT_TO). Future slices extend this file in lockstep with the code that reads the new var."
+- ".env.example is the single source of truth for the set of env vars the production
+  deploy requires. A deploy var added to config/deploy.yml or .kamal/secrets without
+  a corresponding line in .env.example is a process violation."
+- Slice 1 only lists vars already consumed by the current codebase (RAILS_MASTER_KEY,
+  DORM_GUARD_ALERT_TO). Future slices extend this file in lockstep with the code that
+  reads the new var.
+deviations_from_plan: 'Added !/.env.example to .gitignore to let the committed template
+  through — plan bug, the greedy /.env* rule was already present and Slice 4 was the
+  wrong home for this change.
 
-deviations_from_plan: >
-  Added !/.env.example to .gitignore to let the committed template through — plan bug, the greedy /.env* rule was already present and Slice 4 was the wrong home for this change.
+  '
+trade_offs: 'Could have skipped the .env.example stub and committed nothing (the slice''s
+  verification is entirely external to the git tree). Chose to seed the contract file
+  now so later slices have a stable place to extend, and so the commit has a real
+  diff rather than being --allow-empty. Cost: a minor drift on .gitignore. Benefit:
+  later slices don''t need to introduce the contract-file concept — it''s already
+  there.
 
-trade_offs: >
-  Could have skipped the .env.example stub and committed nothing (the
-  slice's verification is entirely external to the git tree). Chose to
-  seed the contract file now so later slices have a stable place to
-  extend, and so the commit has a real diff rather than being
-  --allow-empty. Cost: a minor drift on .gitignore. Benefit: later
-  slices don't need to introduce the contract-file concept — it's
-  already there.
-
+  '
 self_review:
-  consistency: >
-    Matches the Rails 8 scaffold .env convention. No prior contract
-    file exists in the repo, so Slice 1 establishes the pattern.
-  metz: "N/A — documentation file only."
-  dockerfile: >
-    The Dockerfile was NOT modified. Verified the existing
-    assets:precompile step produces tailwind.css before touching
-    anything. Following the project rule: investigate before editing.
+  consistency: 'Matches the Rails 8 scaffold .env convention. No prior contract file
+    exists in the repo, so Slice 1 establishes the pattern.
 
+    '
+  metz: N/A — documentation file only.
+  dockerfile: 'The Dockerfile was NOT modified. Verified the existing assets:precompile
+    step produces tailwind.css before touching anything. Following the project rule:
+    investigate before editing.
+
+    '
 confidence: high
 reviewer_attention:
-  - .env.example:1-17   # The comment header establishes the contract — read it carefully to confirm the rule + the per-slice extension plan makes sense before the other slices start adding entries.
+- ".env.example:1-17"
