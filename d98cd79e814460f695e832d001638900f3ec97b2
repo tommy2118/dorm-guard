@@ -1,0 +1,41 @@
+slice: "lint-fix"
+intent: "Fix rubocop violations introduced in Slices 3 and 4 that were not caught before committing."
+plan: delegated-crunching-crescent
+confidence: high
+reversibility: trivial
+
+scope:
+  declared: []
+  actual:
+    - app/services/ssrf_guard.rb
+    - spec/services/ssrf_guard_spec.rb
+  drift: []
+
+proof:
+  tests_run: "bin/dc bundle exec rspec && bin/dc bundle exec rubocop"
+  result: green
+  failing: 0
+  total: 213
+
+tests:
+  needed: "no"
+  rationale: "Formatting-only changes; no logic touched"
+
+lint:
+  result: clean
+  tool: rubocop -a
+
+deviations_from_plan: >
+  Lint was not run before committing Slices 3 and 4. Two cops fired:
+  Style/TrailingCommaInArrayLiteral (ssrf_guard.rb BLOCKED_RANGES last entry)
+  and Layout/SpaceInsideArrayLiteralBrackets (ssrf_guard_spec.rb stub_dns calls).
+  Both autocorrected.
+
+assumptions: []
+specifications: []
+trade_offs: []
+self_review: {}
+interfaces:
+  consumed: []
+  published: []
+reviewer_attention: []
