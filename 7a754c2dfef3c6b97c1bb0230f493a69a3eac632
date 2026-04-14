@@ -1,0 +1,52 @@
+slice: "pr-review-fixes"
+intent: >-
+  Address three findings from the pr-review pass: fix wrong line pointer in
+  Slice 3 agent note, add explicit secure: true to session cookie, and add
+  spec coverage for the PasswordsController password reset flow.
+plan: delegated-crunching-crescent
+confidence: high
+reversibility: trivial
+
+scope:
+  declared: []
+  actual:
+    - app/controllers/concerns/authentication.rb
+    - spec/requests/passwords_controller_spec.rb
+  drift: []
+
+proof:
+  tests_run: "bin/dc bundle exec rspec && bin/dc bundle exec rubocop"
+  result: green
+  failing: 0
+  total: 222
+
+tests:
+  needed: "yes"
+  added:
+    - "spec/requests/passwords_controller_spec.rb — 9 examples covering new, create (enumeration guard), edit token validation, update success/mismatch/floor/invalid-token"
+
+lint:
+  result: clean
+
+deviations_from_plan: "addressing pr-review findings, not in original 4-slice plan"
+
+assumptions:
+  - "secure: Rails.env.production? is the right conditional — test/CI environments run without HTTPS, production always does"
+  - "generate_token_for(:password_reset) is the Rails 8 API for generating reset tokens in specs"
+
+specifications:
+  - "Session cookie must carry Secure attribute in production"
+  - "Password reset flow (new/create/edit/update) must have automated request spec coverage"
+
+self_review:
+  tests: "9 spec examples cover the full reset flow including enumeration guard and the known UX debt (wrong alert for short passwords)"
+  security: "secure: Rails.env.production? makes the Secure flag explicit; enumeration guard confirmed — same notice regardless of email existence"
+  metz: "passwords_controller_spec.rb: no class, method lengths n/a for spec files"
+
+interfaces:
+  consumed:
+    - "User#generate_token_for(:password_reset) -> String"
+    - "User.find_by_password_reset_token!(token) -> User | raises"
+  published: []
+
+reviewer_attention: []
