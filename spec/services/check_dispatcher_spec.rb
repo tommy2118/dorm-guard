@@ -24,6 +24,24 @@ RSpec.describe CheckDispatcher do
       end
     end
 
+    context "with an :ssl site" do
+      let(:ssl_site) do
+        Site.create!(
+          name: "Secure",
+          url: "https://example.com",
+          interval_seconds: 60,
+          check_type: :ssl,
+          tls_port: 443
+        )
+      end
+
+      it "dispatches to SslChecker.check with host derived from the url and the tls_port" do
+        expect(SslChecker).to receive(:check).with(host: "example.com", port: 443).and_return(outcome)
+
+        expect(described_class.call(ssl_site)).to eq(outcome)
+      end
+    end
+
     context "with an unrouted check_type" do
       let(:phantom_site) { instance_double(Site, check_type: "phantom", url: "https://example.com") }
 

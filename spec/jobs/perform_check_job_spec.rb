@@ -97,6 +97,24 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when the check succeeds with nil status_code (non-HTTP check type)" do
+      let(:result) do
+        CheckOutcome.new(
+          status_code: nil,
+          response_time_ms: 12,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: { cert_not_after: Time.current + 90 * 86_400 }
+        )
+      end
+
+      it "marks the site as up (nil status_code + nil error_message = success for non-HTTP)" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_up
+      end
+    end
+
     context "when the check has a transport-level error" do
       let(:result) do
         CheckOutcome.new(

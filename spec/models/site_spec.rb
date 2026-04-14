@@ -145,15 +145,49 @@ RSpec.describe Site, type: :model do
     end
   end
 
-  describe "clear_irrelevant_config callback seam" do
-    # The callback is wired in Slice 2 as a no-op. Later slices extend it
-    # to null out columns that don't apply to the current check_type. This
-    # spec pins the wiring — if a later slice accidentally drops the
-    # `before_validation :clear_irrelevant_config` line, this fails.
+  describe "tls_port validation" do
+    let(:ssl_attrs) { valid_attrs.merge(check_type: :ssl, tls_port: 443) }
+
+    it "is valid for an :ssl site with a legal port" do
+      expect(described_class.new(ssl_attrs)).to be_valid
+    end
+
+    it "requires tls_port when check_type is :ssl" do
+      site = described_class.new(ssl_attrs.merge(tls_port: nil))
+      expect(site).not_to be_valid
+      expect(site.errors[:tls_port]).to be_present
+    end
+
+    it "rejects a tls_port above 65535" do
+      site = described_class.new(ssl_attrs.merge(tls_port: 70_000))
+      expect(site).not_to be_valid
+    end
+
+    it "does not require tls_port for an :http site" do
+      expect(described_class.new(valid_attrs.merge(check_type: :http))).to be_valid
+    end
+  end
+
+  describe "clear_irrelevant_config callback" do
     it "runs the callback on validation" do
       site = described_class.new(valid_attrs)
       expect(site).to receive(:clear_irrelevant_config).and_call_original
       site.valid?
+    end
+
+    it "nulls tls_port when flipping from :ssl to :http" do
+      site = described_class.create!(
+        valid_attrs.merge(check_type: :ssl, tls_port: 8443)
+      )
+      site.update!(check_type: :http)
+      expect(site.reload.tls_port).to be_nil
+    end
+
+    it "leaves tls_port alone for :ssl sites" do
+      site = described_class.create!(
+        valid_attrs.merge(check_type: :ssl, tls_port: 8443)
+      )
+      expect(site.reload.tls_port).to eq(8443)
     end
   end
 

@@ -45,6 +45,16 @@ RSpec.describe SiteFormComponent, type: :component do
       expect(page).to have_css("input[name='site[interval_seconds]'].input.input-bordered")
     end
 
+    it "renders a check_type select with HTTP and SSL options" do
+      expect(page).to have_css("select[name='site[check_type]'].select.select-bordered")
+      expect(page).to have_css("select[name='site[check_type]'] option[value='http']", text: "HTTP")
+      expect(page).to have_css("select[name='site[check_type]'] option[value='ssl']", text: /SSL/)
+    end
+
+    it "renders a tls_port input with the DEFAULT_TLS_PORT as initial value" do
+      expect(page).to have_css("input[name='site[tls_port]'][value='443']")
+    end
+
     it "renders a Cancel link to the sites index" do
       expect(page).to have_link("Cancel", href: "/sites")
     end

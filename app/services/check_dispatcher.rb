@@ -1,3 +1,5 @@
+require "uri"
+
 # Routes a Site to the checker implementation that matches its check_type.
 #
 # Contract: CheckDispatcher is a thin routing boundary. It may do exactly
@@ -18,6 +20,8 @@ class CheckDispatcher
     case site.check_type
     when "http"
       HttpChecker.check(site.url)
+    when "ssl"
+      SslChecker.check(host: URI.parse(site.url).host, port: site.tls_port)
     else
       raise UnknownCheckType, site.check_type
     end
