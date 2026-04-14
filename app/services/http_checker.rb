@@ -1,10 +1,9 @@
 require "faraday"
 
 class HttpChecker
-  Result = Data.define(:status_code, :response_time_ms, :error_message, :checked_at)
-
   OPEN_TIMEOUT = 5
   READ_TIMEOUT = 10
+  BODY_BYTE_CAP = 1_048_576 # 1 MiB
 
   def self.check(url)
     new.check(url)
@@ -15,9 +14,9 @@ class HttpChecker
     parsed = URI.parse(url)
     raise URI::InvalidURIError, "Unsupported scheme: #{parsed.scheme}" unless %w[http https].include?(parsed.scheme)
     response = connection.get(url)
-    success_result(response, started_at)
+    success_outcome(response, started_at)
   rescue Faraday::Error, URI::InvalidURIError => e
-    error_result(e, started_at)
+    error_outcome(e, started_at)
   end
 
   private
@@ -30,22 +29,33 @@ class HttpChecker
     end
   end
 
-  def success_result(response, started_at)
-    Result.new(
+  def success_outcome(response, started_at)
+    CheckOutcome.new(
       status_code: response.status,
       response_time_ms: elapsed_ms(started_at),
       error_message: nil,
-      checked_at: started_at
+      checked_at: started_at,
+      body: truncate_body(response.body),
+      metadata: {}
     )
   end
 
-  def error_result(error, started_at)
-    Result.new(
+  def error_outcome(error, started_at)
+    CheckOutcome.new(
       status_code: nil,
       response_time_ms: elapsed_ms(started_at),
       error_message: "#{error.class}: #{error.message}",
-      checked_at: started_at
+      checked_at: started_at,
+      body: nil,
+      metadata: {}
     )
+  end
+
+  def truncate_body(body)
+    return nil if body.nil?
+
+    truncated = body.to_s.byteslice(0, BODY_BYTE_CAP).dup
+    truncated.force_encoding(Encoding::UTF_8).scrub("")
   end
 
   def elapsed_ms(started_at)

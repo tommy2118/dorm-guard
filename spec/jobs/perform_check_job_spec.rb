@@ -6,11 +6,13 @@ RSpec.describe PerformCheckJob, type: :job do
   end
   let(:checked_at) { Time.current }
   let(:result) do
-    HttpChecker::Result.new(
+    CheckOutcome.new(
       status_code: 200,
       response_time_ms: 42,
       error_message: nil,
-      checked_at: checked_at
+      checked_at: checked_at,
+      body: nil,
+      metadata: {}
     )
   end
 
@@ -43,7 +45,14 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 3xx" do
       let(:result) do
-        HttpChecker::Result.new(status_code: 302, response_time_ms: 10, error_message: nil, checked_at: checked_at)
+        CheckOutcome.new(
+          status_code: 302,
+          response_time_ms: 10,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
       end
 
       it "marks the site as up" do
@@ -54,7 +63,14 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 4xx" do
       let(:result) do
-        HttpChecker::Result.new(status_code: 404, response_time_ms: 10, error_message: nil, checked_at: checked_at)
+        CheckOutcome.new(
+          status_code: 404,
+          response_time_ms: 10,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
       end
 
       it "marks the site as down" do
@@ -65,7 +81,14 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 5xx" do
       let(:result) do
-        HttpChecker::Result.new(status_code: 503, response_time_ms: 10, error_message: nil, checked_at: checked_at)
+        CheckOutcome.new(
+          status_code: 503,
+          response_time_ms: 10,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
       end
 
       it "marks the site as down" do
@@ -76,11 +99,13 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check has a transport-level error" do
       let(:result) do
-        HttpChecker::Result.new(
+        CheckOutcome.new(
           status_code: nil,
           response_time_ms: 500,
           error_message: "Faraday::ConnectionFailed: refused",
-          checked_at: checked_at
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
         )
       end
 
@@ -103,19 +128,23 @@ RSpec.describe PerformCheckJob, type: :job do
 
   describe "downtime alert dispatch" do
     let(:down_result) do
-      HttpChecker::Result.new(
+      CheckOutcome.new(
         status_code: 503,
         response_time_ms: 50,
         error_message: nil,
-        checked_at: Time.current
+        checked_at: Time.current,
+        body: nil,
+        metadata: {}
       )
     end
     let(:up_result) do
-      HttpChecker::Result.new(
+      CheckOutcome.new(
         status_code: 200,
         response_time_ms: 50,
         error_message: nil,
-        checked_at: Time.current
+        checked_at: Time.current,
+        body: nil,
+        metadata: {}
       )
     end
 
