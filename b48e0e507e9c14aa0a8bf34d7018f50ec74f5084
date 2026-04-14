@@ -1,0 +1,69 @@
+intent: >
+  Switch SMTP_PORT from 587 to 2587 in deploy.yml's env.clear so
+  outbound SMTP from the DO droplet actually reaches SES. Port 587
+  is blocked by DigitalOcean's default anti-spam policy; SES
+  publishes 2587 as an alternate port specifically for ISP /
+  cloud-provider SMTP blocks.
+
+slice: 7b/9
+kind: fix
+behavior_change: breaking
+reversibility: reversible
+
+scope:
+  declared:
+    - config/deploy.yml
+  actual:
+    - config/deploy.yml
+  drift: []
+
+proof:
+  tests_run: >
+    bin/dc kamal config (parses); direct openssl probe from droplet on :2587
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Single-line config value change. Verified via live SMTP probe
+    from the droplet and by observing the deployed mailer drop
+    from 5424ms to 534ms.
+
+verification:
+  tested: []
+  manual:
+    - "Before fix: `openssl s_client -connect email-smtp.us-east-1.amazonaws.com:587 -starttls smtp` hung silently on the droplet"
+    - "After fix: same command on :2587 returned the full SES cert chain (Amazon Root CA 1 → Amazon RSA 2048 M04 → CN=email-smtp.us-east-1.amazonaws.com), TLS handshake complete"
+    - "Post-deploy mailer job f9b09639 Performed in 534ms (was 5424ms — exactly the Mail gem's 5s read_timeout before)"
+    - "aws ses get-send-statistics shows a new DeliveryAttempts=1 data point at 23:56 UTC after the port fix deploy; SentLast24Hours climbed from 1.0 to 2.0"
+
+assumptions:
+  - "DigitalOcean's SMTP block on ports 25/465/587 is stable (documented policy at docs.digitalocean.com/support/why-is-smtp-blocked). If DO changes this, we're allowed to go back to 587 without functional impact, but there's no reason to."
+  - "SES's alternate port 2587 is stable and equivalent to 587 (STARTTLS on a non-standard port). AWS docs list 2587 and 2465 alongside the standard ports."
+
+specifications:
+  - "SMTP_PORT in deploy.yml:env.clear is now 2587. This port is load-bearing for outbound delivery from the DO droplet. Any future provider swap must verify the replacement provider offers a port outside 25/465/587, or the operator must file a DO support ticket to unblock the standard ports first."
+
+deviations_from_plan: >
+  Slice 7 discovered this blocker mid-smoke. Not in the original 9-slice plan. Numbered 7b/9 to continue the letter-suffix pattern for mid-slice fixes.
+
+trade_offs: >
+  Could have filed a DO support ticket to unblock port 587, which
+  would have restored the standard port but required a human wait.
+  Chose the port 2587 switch instead — zero wait, one-line config,
+  same-security, works immediately.
+
+self_review:
+  consistency: "Same config shape as the other deploy.yml env.clear values. The comment block above the line explains the DO block + SES alternate-port rationale."
+  surprise_for_future_maintainer: >
+    The non-standard port (2587 instead of the canonical 587) is
+    a surprise-in-waiting. A future maintainer looking at the
+    config without reading the comment block might 'fix' it back
+    to 587 and break production delivery. The comment spells out
+    the DO policy and the link to DO docs so the reason is
+    discoverable.
+
+confidence: high
+reviewer_attention:
+  - config/deploy.yml:50-64   # The SMTP_PORT value + the DO-block comment block. Do not 'normalize' to 587 without reading the comment.
