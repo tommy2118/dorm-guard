@@ -12,6 +12,8 @@ class HttpChecker
 
   def check(url)
     started_at = Time.current
+    parsed = URI.parse(url)
+    raise URI::InvalidURIError, "Unsupported scheme: #{parsed.scheme}" unless %w[http https].include?(parsed.scheme)
     response = connection.get(url)
     success_result(response, started_at)
   rescue Faraday::Error, URI::InvalidURIError => e
@@ -22,6 +24,7 @@ class HttpChecker
 
   def connection
     Faraday.new do |f|
+      f.use SsrfGuard # must come before any redirect middleware added in the future
       f.options.open_timeout = OPEN_TIMEOUT
       f.options.timeout = READ_TIMEOUT
     end

@@ -1,6 +1,10 @@
 require "rails_helper"
 
 RSpec.describe "Sites", type: :request do
+  let(:user) { User.create!(email_address: "test@example.com", password: "a_secure_passphrase_16", password_confirmation: "a_secure_passphrase_16") }
+
+  before { sign_in_as(user) }
+
   describe "GET /sites" do
     let!(:up_site) do
       Site.create!(
