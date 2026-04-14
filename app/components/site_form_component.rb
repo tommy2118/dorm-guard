@@ -2,7 +2,8 @@ class SiteFormComponent < ApplicationComponent
   CHECK_TYPE_LABELS = {
     "http" => "HTTP",
     "ssl" => "SSL certificate expiry",
-    "tcp" => "TCP port"
+    "tcp" => "TCP port",
+    "dns" => "DNS resolution"
   }.freeze
 
   def initialize(site:)

@@ -24,6 +24,8 @@ class CheckDispatcher
       SslChecker.check(host: URI.parse(site.url).host, port: site.tls_port)
     when "tcp"
       TcpChecker.check(host: URI.parse(site.url).host, port: site.tcp_port)
+    when "dns"
+      DnsChecker.check(hostname: site.dns_hostname)
     else
       raise UnknownCheckType, site.check_type
     end

@@ -145,6 +145,43 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "dns_hostname validation and url relaxation" do
+    let(:dns_attrs) { { name: "DNS", check_type: :dns, dns_hostname: "example.com", interval_seconds: 60 } }
+
+    it "is valid for a :dns site with a hostname and no url" do
+      expect(described_class.new(dns_attrs)).to be_valid
+    end
+
+    it "does NOT require url when check_type is :dns" do
+      site = described_class.new(dns_attrs.merge(url: nil))
+      expect(site).to be_valid
+    end
+
+    it "requires dns_hostname when check_type is :dns" do
+      site = described_class.new(dns_attrs.merge(dns_hostname: nil))
+      expect(site).not_to be_valid
+      expect(site.errors[:dns_hostname]).to be_present
+    end
+
+    it "rejects a dns_hostname with invalid characters" do
+      site = described_class.new(dns_attrs.merge(dns_hostname: "bad host!"))
+      expect(site).not_to be_valid
+    end
+
+    it "rejects a dns_hostname starting with a hyphen" do
+      site = described_class.new(dns_attrs.merge(dns_hostname: "-bad.example"))
+      expect(site).not_to be_valid
+    end
+
+    it "accepts a multi-label fully-qualified domain" do
+      expect(described_class.new(dns_attrs.merge(dns_hostname: "sub.domain.example.com"))).to be_valid
+    end
+
+    it "does not require dns_hostname for an :http site" do
+      expect(described_class.new(valid_attrs.merge(check_type: :http))).to be_valid
+    end
+  end
+
   describe "tcp_port validation" do
     let(:tcp_attrs) { valid_attrs.merge(check_type: :tcp, tcp_port: 22) }
 
@@ -226,6 +263,20 @@ RSpec.describe Site, type: :model do
         valid_attrs.merge(check_type: :tcp, tcp_port: 22)
       )
       expect(site.reload.tcp_port).to eq(22)
+    end
+
+    it "nulls url when flipping to :dns" do
+      site = described_class.create!(valid_attrs)
+      site.update!(check_type: :dns, dns_hostname: "example.com")
+      expect(site.reload.url).to be_nil
+    end
+
+    it "nulls dns_hostname when flipping from :dns to :http" do
+      site = described_class.create!(
+        name: "DNS", check_type: :dns, dns_hostname: "example.com", interval_seconds: 60
+      )
+      site.update!(check_type: :http, url: "https://example.com")
+      expect(site.reload.dns_hostname).to be_nil
     end
   end
 

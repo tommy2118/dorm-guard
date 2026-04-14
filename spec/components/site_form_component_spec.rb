@@ -96,6 +96,27 @@ RSpec.describe SiteFormComponent, type: :component do
     end
   end
 
+  describe "rendering for a new :dns site" do
+    before do
+      with_request_url "/sites/new" do
+        render_inline(described_class.new(site: Site.new(check_type: :dns)))
+      end
+    end
+
+    it "renders the dns_hostname input" do
+      expect(page).to have_css("input[name='site[dns_hostname]']")
+    end
+
+    it "does NOT render the url field (DNS sites don't have a URL)" do
+      expect(page).not_to have_css("input[name='site[url]']")
+    end
+
+    it "still renders the name and interval fields" do
+      expect(page).to have_css("input[name='site[name]']")
+      expect(page).to have_css("input[name='site[interval_seconds]']")
+    end
+  end
+
   describe "rendering with validation errors" do
     it "renders inline errors and input-error classes for invalid fields" do
       invalid_site = Site.new(name: "", url: "not-a-url", interval_seconds: 10)

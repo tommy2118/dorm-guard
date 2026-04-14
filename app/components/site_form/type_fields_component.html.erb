@@ -3,4 +3,6 @@
   <%= render(SiteForm::SslFieldsComponent.new(form: form, site: site)) %>
 <% when "tcp" %>
   <%= render(SiteForm::TcpFieldsComponent.new(form: form, site: site)) %>
+<% when "dns" %>
+  <%= render(SiteForm::DnsFieldsComponent.new(form: form, site: site)) %>
 <% end %>

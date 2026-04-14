@@ -1,0 +1,9 @@
+<div class="form-control">
+  <%= form.label :dns_hostname, "Hostname to resolve", class: "label label-text font-medium" %>
+  <%= form.text_field :dns_hostname,
+        placeholder: "example.com",
+        class: "input input-bordered w-full#{' input-error' if field_error(:dns_hostname)}" %>
+  <% if (msg = field_error(:dns_hostname)) %>
+    <p class="mt-1 text-sm text-error"><%= msg %></p>
+  <% end %>
+</div>

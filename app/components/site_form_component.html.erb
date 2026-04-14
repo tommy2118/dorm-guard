@@ -19,15 +19,17 @@
             class: "select select-bordered w-full" %>
     </div>
 
-    <div class="form-control">
-      <%= f.label :url, class: "label label-text font-medium" %>
-      <%= f.url_field :url,
-            class: "input input-bordered w-full#{' input-error' if field_error(:url)}",
-            placeholder: "https://example.com" %>
-      <% if (msg = field_error(:url)) %>
-        <p class="mt-1 text-sm text-error"><%= msg %></p>
-      <% end %>
-    </div>
+    <% unless site.dns? %>
+      <div class="form-control">
+        <%= f.label :url, class: "label label-text font-medium" %>
+        <%= f.url_field :url,
+              class: "input input-bordered w-full#{' input-error' if field_error(:url)}",
+              placeholder: "https://example.com" %>
+        <% if (msg = field_error(:url)) %>
+          <p class="mt-1 text-sm text-error"><%= msg %></p>
+        <% end %>
+      </div>
+    <% end %>
 
     <%= render(SiteForm::TypeFieldsComponent.new(form: f, site: site)) %>
 

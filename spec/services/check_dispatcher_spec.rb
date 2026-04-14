@@ -60,6 +60,23 @@ RSpec.describe CheckDispatcher do
       end
     end
 
+    context "with a :dns site" do
+      let(:dns_site) do
+        Site.create!(
+          name: "DNS check",
+          interval_seconds: 60,
+          check_type: :dns,
+          dns_hostname: "example.com"
+        )
+      end
+
+      it "dispatches to DnsChecker.check with the dns_hostname" do
+        expect(DnsChecker).to receive(:check).with(hostname: "example.com").and_return(outcome)
+
+        expect(described_class.call(dns_site)).to eq(outcome)
+      end
+    end
+
     context "with an unrouted check_type" do
       let(:phantom_site) { instance_double(Site, check_type: "phantom", url: "https://example.com") }
 
