@@ -1,0 +1,165 @@
+intent: >
+  Extract IpGuard and CheckOutcome so Slices 2-10 build on stable shared
+  contracts: a Faraday-agnostic SSRF range check and a canonical checker
+  return value with body + metadata.
+
+slice: 1/10
+kind: refactor
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/services/check_outcome.rb
+    - app/services/ip_guard.rb
+    - app/services/ssrf_guard.rb
+    - app/services/http_checker.rb
+    - spec/services/check_outcome_spec.rb
+    - spec/services/ip_guard_spec.rb
+    - spec/services/ssrf_guard_spec.rb
+    - spec/services/http_checker_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+  actual:
+    - app/services/check_outcome.rb
+    - app/services/ip_guard.rb
+    - app/services/ssrf_guard.rb
+    - app/services/http_checker.rb
+    - spec/services/check_outcome_spec.rb
+    - spec/services/ip_guard_spec.rb
+    - spec/services/ssrf_guard_spec.rb
+    - spec/services/http_checker_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/ip_guard_spec.rb
+    - spec/services/check_outcome_spec.rb
+    - spec/services/ssrf_guard_spec.rb
+    - spec/services/http_checker_spec.rb
+    - spec/jobs/perform_check_job_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "Faraday 2.x env.url.hostname still strips brackets from IPv6 literals"
+  - "Resolv.getaddresses returns both A and AAAA records and an empty array on NXDOMAIN"
+  - "Faraday response bodies are mutable strings (force_encoding does not raise FrozenError)"
+
+specifications:
+  - "CheckOutcome has exactly six fields (status_code, response_time_ms, error_message, checked_at, body, metadata); all required, no defaults"
+  - "CheckOutcome instances are frozen — checkers cannot mutate an in-flight outcome"
+  - "HttpChecker body is truncated to 1 MiB measured in bytes, then force-encoded UTF-8 and scrubbed; invalid byte sequences are dropped"
+  - "HttpChecker leaves body nil on transport-level failures (Faraday::Error) — only populated when a response was actually received"
+  - "IpGuard.check! fails closed on NXDOMAIN (empty Resolv result → BlockedIpError)"
+  - "IpGuard.check! fails closed on unparsable resolved addresses (IPAddr::InvalidAddressError → BlockedIpError)"
+  - "IpGuard.check! blocks if ANY address in a multi-address resolution is private (split-horizon guard)"
+  - "IpGuard.check! short-circuits Resolv for literal IPs (both blocked and public) — public literals no longer trigger a redundant DNS lookup"
+  - "IpGuard::BlockedIpError is a plain StandardError; SsrfGuard::BlockedIpError remains a Faraday::Error so HttpChecker's existing rescue clause still catches SSRF blocks"
+
+deviations_from_plan: >
+  Small behavior change documented as deliberate: literal public IPs (e.g. 1.1.1.1) now
+  skip the Resolv.getaddresses lookup that the pre-slice SsrfGuard performed
+  redundantly. The plan's mutation-resistant spec gate explicitly required this
+  fast path (case 2: "literal public IP passes, no DNS lookup attempted").
+
+trade_offs: >
+  Kept IpGuard.check! at 5 executable statements (marginally over Metz's 5-line
+  rule when counted physically) rather than splitting the literal-IP fast path
+  into a separate helper; splitting would obscure the two-phase intent. The
+  alternative (two public methods check_literal! and check_dns!) leaked
+  implementation details into callers.
+
+  BlockedIpError is defined twice (IpGuard and SsrfGuard) because one needs
+  to be a plain StandardError for non-Faraday checkers and the other needs to
+  be a Faraday::Error for HttpChecker's existing rescue. SsrfGuard#call catches
+  IpGuard's and re-raises its own. The string-duplication cost is 1 line of
+  re-raise; the alternative (making IpGuard depend on Faraday) defeats the
+  extraction.
+
+interfaces:
+  consumed:
+    - "Faraday::Middleware (Faraday ~2.0, base class for SsrfGuard)"
+    - "Resolv.getaddresses(hostname) -> Array<String>"
+    - "IPAddr.new(str) -> IPAddr"
+  published:
+    - "IpGuard.check!(host_or_ip) -> true | raises IpGuard::BlockedIpError"
+    - "IpGuard::BlockedIpError < StandardError"
+    - "CheckOutcome.new(status_code:, response_time_ms:, error_message:, checked_at:, body:, metadata:) -> CheckOutcome"
+    - "HttpChecker.check(url) -> CheckOutcome"
+    - "SsrfGuard::BlockedIpError < Faraday::Error"
+
+self_review:
+  tests: >
+    Added spec/services/ip_guard_spec.rb with 9 mutation-resistant cases mandated
+    by the plan. Added spec/services/check_outcome_spec.rb (field exposure, frozen,
+    required args). Slimmed spec/services/ssrf_guard_spec.rb from 18 IP-range cases
+    to 4 middleware-concern cases (delegates to IpGuard, re-raises as Faraday::Error,
+    passes through on allow). Extended spec/services/http_checker_spec.rb with body
+    populated / 1 MiB truncation / invalid-UTF-8 scrub / transport-error nil-body.
+    Updated spec/jobs/perform_check_job_spec.rb to construct CheckOutcome (6 call
+    sites) and pass body: nil, metadata: {}.
+  consistency: >
+    IpGuard.check! mirrors HttpChecker.check's class-method entrypoint pattern.
+    CheckOutcome = Data.define(...) at top level is the same shape as the old
+    HttpChecker::Result, just hoisted. SsrfGuard as thin adapter over a plain
+    Ruby utility matches the "Faraday middleware as a boundary translator" pattern
+    we want Slice 8's follow-redirects middleware to follow.
+  metz: >
+    ip_guard.rb 61 lines, 3 methods — check! has 5 executable statements across
+    9 physical lines (one if block with 2-line body and one addresses.each),
+    marginally over the 5-line rule; kept as one method because splitting the
+    two-phase check obscured the literal-IP-fast-path intent. literal_ip? 3 body
+    lines, assert_public! 4 body lines. ssrf_guard.rb dropped from 79 lines to
+    21; call is 4 body lines. http_checker.rb 64 lines, 7 methods; check is 5
+    statements plus rescue clause (unchanged from pre-slice). success_outcome
+    and error_outcome are single-expression CheckOutcome constructors spanning
+    8 physical lines each (same pattern as pre-slice). check_outcome.rb is
+    8 lines, 0 methods (pure Data.define).
+  duplication: >
+    IP-range check logic is now entirely in IpGuard.assert_public! — pure
+    extraction, no copies left in SsrfGuard. The two BlockedIpError classes
+    (IpGuard::BlockedIpError, SsrfGuard::BlockedIpError) are intentional;
+    SsrfGuard#call translates one to the other.
+  mocking: >
+    ssrf_guard_spec.rb mocks IpGuard.check! — owned internal code, fine.
+    ip_guard_spec.rb stubs Resolv.getaddresses — stdlib, but the pre-existing
+    ssrf_guard_spec already used this pattern and the plan mandates network-free
+    checker specs across the epic. Pattern preserved, not introduced.
+  error_paths: >
+    Three fail-closed paths in IpGuard: NXDOMAIN raises (spec case 6), unparsable
+    resolved address raises (case 7), multi-address split-horizon raises (case 5).
+    SsrfGuard#call catches IpGuard::BlockedIpError and re-raises as its own
+    BlockedIpError < Faraday::Error so HttpChecker's existing rescue clause still
+    catches SSRF blocks with zero change to http_checker.rb's rescue.
+  security: >
+    This is the security-boundary slice. SSRF protection has not weakened — the
+    12 HttpChecker SSRF regression cases still pass and the 9-case mutation-resistant
+    IpGuard gate locks the range logic at the utility level. Small deliberate
+    behavior change: literal public IPs skip the redundant Resolv.getaddresses
+    lookup the pre-slice code did.
+  api: >
+    HttpChecker::Result is gone; callers use CheckOutcome. Only internal consumer
+    was perform_check_job_spec.rb, updated in the same slice. CheckOutcome requires
+    6 args with no defaults (Data.define enforces). IpGuard.check! is the new
+    published entrypoint. SsrfGuard::BLOCKED_RANGES has moved to IpGuard::BLOCKED_RANGES;
+    no external consumer referenced it.
+  dead_code: >
+    None. Old SsrfGuard::BLOCKED_RANGES, blocked_literal_ip?, and block! are fully
+    removed. HttpChecker::Result is fully removed.
+
+confidence: high
+reviewer_attention:
+  - "app/services/ip_guard.rb:33-44"  # check! two-phase flow and fail-closed semantics
+  - "app/services/http_checker.rb:52-57"  # truncate_body — dup+force_encoding+scrub dance
+  - "app/services/ssrf_guard.rb:15-20"  # BlockedIpError translation at the Faraday boundary
