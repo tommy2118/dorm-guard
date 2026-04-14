@@ -36,7 +36,7 @@ class SsrfGuard < Faraday::Middleware
     IPAddr.new("198.18.0.0/15"),   # Benchmark testing (RFC 2544)
     IPAddr.new("::1/128"),         # IPv6 loopback
     IPAddr.new("fc00::/7"),        # IPv6 ULA — covers fc00::/8 and fd00::/8
-    IPAddr.new("fe80::/10"),       # IPv6 link-local
+    IPAddr.new("fe80::/10")       # IPv6 link-local
   ].freeze
 
   class BlockedIpError < Faraday::Error; end

@@ -9,7 +9,7 @@ RSpec.describe SsrfGuard do
     Faraday.new do |f|
       f.use SsrfGuard
       f.adapter :test do |stubs|
-        stubs.get(passthrough_url) { [200, {}, "ok"] } if passthrough_url
+        stubs.get(passthrough_url) { [ 200, {}, "ok" ] } if passthrough_url
       end
     end
   end
@@ -74,17 +74,17 @@ RSpec.describe SsrfGuard do
 
   describe "hostname-based URLs (DNS resolution)" do
     it "blocks when the hostname resolves to loopback" do
-      stub_dns("localhost", ["127.0.0.1"])
+      stub_dns("localhost", [ "127.0.0.1" ])
       expect { connection.get("http://localhost/") }.to raise_error(described_class::BlockedIpError)
     end
 
     it "blocks when the hostname resolves to a private RFC 1918 address" do
-      stub_dns("internal.corp", ["10.10.10.10"])
+      stub_dns("internal.corp", [ "10.10.10.10" ])
       expect { connection.get("http://internal.corp/") }.to raise_error(described_class::BlockedIpError)
     end
 
     it "blocks when any resolved address is private (multi-IP split-horizon guard)" do
-      stub_dns("split.example", ["93.184.216.34", "10.0.0.1"])
+      stub_dns("split.example", [ "93.184.216.34", "10.0.0.1" ])
       expect { connection.get("http://split.example/") }.to raise_error(described_class::BlockedIpError)
     end
 
@@ -94,12 +94,12 @@ RSpec.describe SsrfGuard do
     end
 
     it "blocks when a resolved address string is not parseable as an IP (fail closed)" do
-      stub_dns("weird.example", ["not-an-ip-address"])
+      stub_dns("weird.example", [ "not-an-ip-address" ])
       expect { connection.get("http://weird.example/") }.to raise_error(described_class::BlockedIpError)
     end
 
     it "passes through when the hostname resolves to a public IP" do
-      stub_dns("example.com", ["93.184.216.34"])
+      stub_dns("example.com", [ "93.184.216.34" ])
       response = connection(passthrough_url: "https://example.com").get("https://example.com")
       expect(response.status).to eq(200)
     end
