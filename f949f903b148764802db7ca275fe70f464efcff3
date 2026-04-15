@@ -1,0 +1,82 @@
+intent: >
+  Wire slices 3 + 7a into the job. This is the commit that turns the whole
+  epic from "infrastructure inert on main" into "alerts actually fire."
+
+slice: 7b/11
+kind: feature
+behavior_change: additive  # from the dispatcher's perspective; breaking for tests that assumed single-check commits
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+  actual:
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/system/check_types_smoke_spec.rb
+  drift:
+    - spec/system/check_types_smoke_spec.rb  # Epic 5 smoke spec also assumed single-check commit; fixed in place
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/jobs/perform_check_job_spec.rb  # rewrote the "downtime alert dispatch" describe block as "AlertDispatcher integration" with 5 transition cases
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "latest_check_result(site) loads the row record_check just inserted. The transaction has committed by the time apply_result returns (non-nested transaction), so the SELECT is guaranteed to see it."
+  - "Any existing callers that depended on PerformCheckJob committing a status on a single check have been updated. The failing Epic 5 smoke spec was the only one; the rest of the suite already used before-state setup (site.update!(status: :up)) that the debounce treats as a no-op."
+
+specifications:
+  - "PerformCheckJob#update_site: calls site.propose_status(derived) and persists the returned status PLUS the candidate_status/candidate_status_at fields that propose_status mutated in memory."
+  - "PerformCheckJob#perform: after apply_result, calls AlertDispatcher.call(site:, from: previous_status, to: site.status, check_result: latest_check_result(site))."
+  - "latest_check_result loads the most recent CheckResult from the database so the dispatcher and downstream channels see a persisted record (required for the Webhook channel's payload serialization)."
+
+deviations_from_plan: >
+  Drifted into spec/system/check_types_smoke_spec.rb. The plan said slice 7b
+  touches perform_check_job.rb and its spec; the smoke spec from Epic 5 was
+  an unanticipated downstream consumer. Both changes are mechanical
+  (single-check perform_now → two-call run_until_confirmed / 2.times).
+  Keeping this in one slice because splitting "fix the test suite" from
+  "wire the code" would leave the branch red for a second commit.
+
+trade_offs: >
+  Job spec uses mocks for AlertDispatcher instead of end-to-end assertions
+  about channel delivery. Rationale: dispatcher logic has 29 pinned spec
+  examples in its own file; duplicating them in the job spec would make
+  the test suite fragile to dispatcher internals. The job's only
+  responsibility is "call the dispatcher with the right arguments" — that
+  IS an outgoing command, test the interaction.
+
+  latest_check_result does a full ORDER BY checked_at DESC LIMIT 1 query
+  per job run. Cheap on a site with few check results; could memoize the
+  record_check return value but that couples record_check's signature to
+  apply_result. Leaving as-is until the profiler says otherwise.
+
+interfaces:
+  consumed:
+    - "Site#propose_status (slice 3)"
+    - "AlertDispatcher.call(site:, from:, to:, check_result:) (slice 7a)"
+  published: []  # Job signature unchanged: perform(site_id)
+
+self_review:
+  consistency: "Job structure unchanged — same transaction boundary, same derive_status pipeline. Only the commit + dispatcher call are new."
+  metz: "perform is 8 lines; update_site is 9 lines; every private method under 10. Compliant."
+  goos: "Test mocks AlertDispatcher (our type) and CheckDispatcher (our type). No mocking of types we don't own."
+
+confidence: high
+reviewer_attention:
+  - "app/jobs/perform_check_job.rb update_site — the site.update! now persists 4 attributes (status, candidate_status, candidate_status_at, last_checked_at). Confirm that passing `candidate_status: site.candidate_status` re-persists the value propose_status just wrote to the in-memory attribute (it should, since it reads self.candidate_status after the mutation)"
+  - "spec/jobs/perform_check_job_spec.rb run_until_confirmed helper — 2.times loop. If we ever bump N=2 to N=3, this helper moves with it"
