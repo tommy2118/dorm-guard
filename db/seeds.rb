@@ -27,14 +27,51 @@ if Rails.env.production?
 end
 
 if Rails.env.development?
-  Site.find_or_create_by!(name: "Example (always up)") do |site|
+  always_up = Site.find_or_create_by!(name: "Example (always up)") do |site|
     site.url = "https://example.com"
     site.interval_seconds = 60
   end
 
-  Site.find_or_create_by!(name: "Example 404 (always down)") do |site|
+  always_down = Site.find_or_create_by!(name: "Example 404 (always down)") do |site|
     site.url = "https://example.com/definitely-not-a-real-page"
     site.interval_seconds = 60
+  end
+
+  # One site carries a quiet-hours window so the Epic 6 smoke test can
+  # demonstrate the critical override. Window is 00:00-23:59 UTC so it
+  # is active for almost the entire day on any local clock.
+  quiet_demo = Site.find_or_create_by!(name: "Quiet-hours demo") do |site|
+    site.url = "https://example.com"
+    site.interval_seconds = 60
+    site.quiet_hours_start = "00:00"
+    site.quiet_hours_end = "23:59"
+    site.quiet_hours_timezone = "UTC"
+  end
+
+  # Epic 6: each demo site gets three alert preferences — email, slack,
+  # and generic webhook — pointing at placeholder targets on example.com.
+  # The targets are IANA-reserved (no loopback, no private ranges), so
+  # the SSRF guard lets them through and the channel prints a 404 in the
+  # Rails log when fired. Users wanting real delivery override via:
+  #   DORM_GUARD_SLACK_WEBHOOK_URL  / DORM_GUARD_GENERIC_WEBHOOK_URL
+  slack_target = ENV.fetch("DORM_GUARD_SLACK_WEBHOOK_URL", "https://example.com/slack-webhook-placeholder")
+  webhook_target = ENV.fetch("DORM_GUARD_GENERIC_WEBHOOK_URL", "https://example.com/webhook-placeholder")
+
+  [ always_up, always_down, quiet_demo ].each do |site|
+    site.alert_preferences.find_or_create_by!(channel: :email) do |pref|
+      pref.target = "dev@dorm-guard.local"
+      pref.events = %w[down up degraded]
+    end
+
+    site.alert_preferences.find_or_create_by!(channel: :slack) do |pref|
+      pref.target = slack_target
+      pref.events = %w[down up]
+    end
+
+    site.alert_preferences.find_or_create_by!(channel: :webhook) do |pref|
+      pref.target = webhook_target
+      pref.events = %w[down up degraded]
+    end
   end
 
   # Extra seeds exist so the manual smoke test exercises index pagination
@@ -48,7 +85,7 @@ if Rails.env.development?
     end
   end
 
-  puts "Seeded #{Site.count} dev fixture sites."
+  puts "Seeded #{Site.count} dev fixture sites (including alert preferences)."
 end
 
 if ENV["SMOKE_SEED"]
