@@ -1,0 +1,76 @@
+intent: >
+  Bump Kamal's deploy_timeout from the 30s default to 120s so deploys stop
+  failing before Rails has finished its ~60s cold boot on the prod droplet.
+
+slice: "?/?"
+kind: fix
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared: []
+  actual:
+    - config/deploy.yml
+  drift: []
+
+proof:
+  tests_run: >-
+    bin/dc ruby -r kamal -e 'puts Kamal::Configuration.create_from(config_file: Pathname.new("config/deploy.yml")).deploy_timeout'
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    Config-only change to a Kamal deploy parameter. Kamal parses the value
+    (confirmed: Ruby reads it back as 120) and there is no application
+    behavior to cover with a spec. Real verification is a successful deploy
+    to prod, which only the next kamal deploy can prove. That's tracked
+    under verification.manual and will be confirmed when the user deploys.
+
+verification:
+  tested:
+    - "Kamal parses deploy_timeout: 120 (ruby -r kamal ... puts deploy_timeout -> 120)"
+    - "bin/dc bin/kamal config loads without error after the edit"
+  manual:
+    - "Next deploy to production should clear the 30s cliff and complete -- pending"
+
+assumptions:
+  - "No active plan covers this slice -- ad-hoc hotfix for the failing 2026-04-15 02:29 UTC deploy"
+  - "Rails cold boot on the 1vCPU/1GB droplet will fit inside 120s; observed ~60s until Puma begins listening, and /up is cheap once Puma is up"
+  - "Kamal 2.11's deploy_timeout is passed to kamal-proxy as --deploy-timeout (verified in lib/kamal/cli/healthcheck/poller.rb and configuration/proxy.rb)"
+  - "The 30s timeout in the failing deploy error message is the same deploy_timeout knob, not a separate proxy.healthcheck.timeout"
+
+specifications:
+  - "deploy_timeout is pinned in config/deploy.yml with inline rationale -- enforced in config, not just documented in an ADR"
+  - "120s is the temporary floor until cold-boot is reduced (#27)"
+
+deviations_from_plan: "no active plan -- ad-hoc hotfix for failing prod deploy"
+
+trade_offs: >
+  Treats the symptom, not the cause -- the ~60s cold boot is still there
+  and #27 is the real fix. Accepted cost: failed deploys now take ~2
+  minutes to surface instead of 30s, worse feedback latency on genuinely
+  broken deploys. Accepted because right now no deploy can land at all.
+  Alternative (reduce cold boot first) rejected as too much work for an
+  unbreak-deploys slice; captured in #27 so it doesn't get lost.
+
+self_review:
+  consistency: >
+    New top-level key + inline comment block matches the style of the
+    WEB_CONCURRENCY=1 pin lower in the same file -- the why lives next to
+    the value, no separate ADR-only documentation.
+  metz: "N/A -- YAML config, no classes or methods."
+  enforced_in_config: >
+    Follows the project's enforce-constraints-in-config rule -- the
+    constraint is load-bearing (deploys fail without it) so it lives in
+    deploy.yml, not only in a doc or commit message.
+  absolutist_tradeoff_language: >
+    Comment and commit message frame this as an "accepted trade-off" with
+    a named cost, per the project's no-absolutist-tradeoff-language rule.
+
+confidence: high
+reviewer_attention:
+  - config/deploy.yml:8-22   # the deploy_timeout block + rationale -- check that the trade-off framing and 120s floor are the right call
