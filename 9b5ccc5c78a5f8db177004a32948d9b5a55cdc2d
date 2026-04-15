@@ -1,0 +1,100 @@
+intent: >
+  Add the Email concrete channel and its shared contract so slices 5/6 can
+  implement Slack and Webhook against the same interface. Also extends
+  DowntimeAlertMailer with the two new actions the epic needs.
+
+slice: 4/11
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/mailers/downtime_alert_mailer.rb
+    - app/views/downtime_alert_mailer/site_recovered.html.erb
+    - app/views/downtime_alert_mailer/site_recovered.text.erb
+    - app/views/downtime_alert_mailer/site_degraded.html.erb
+    - app/views/downtime_alert_mailer/site_degraded.text.erb
+    - spec/mailers/downtime_alert_mailer_spec.rb
+    - app/services/alert_channels.rb
+    - app/services/alert_channels/base.rb
+    - app/services/alert_channels/email.rb
+    - spec/support/alert_channel_contract.rb
+    - spec/services/alert_channels/email_spec.rb
+  actual:
+    - app/mailers/downtime_alert_mailer.rb
+    - app/views/downtime_alert_mailer/site_recovered.html.erb
+    - app/views/downtime_alert_mailer/site_recovered.text.erb
+    - app/views/downtime_alert_mailer/site_degraded.html.erb
+    - app/views/downtime_alert_mailer/site_degraded.text.erb
+    - spec/mailers/downtime_alert_mailer_spec.rb
+    - app/services/alert_channels.rb
+    - app/services/alert_channels/base.rb
+    - app/services/alert_channels/email.rb
+    - spec/support/alert_channel_contract.rb
+    - spec/services/alert_channels/email_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/mailers/downtime_alert_mailer_spec.rb
+    - spec/services/alert_channels/email_spec.rb
+    - spec/support/alert_channel_contract.rb
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "have_enqueued_mail is available via rspec-rails' ActionMailer matchers — confirmed by the existing downtime_alert_mailer_spec using ActionMailer test mode implicitly."
+  - "Extracting the recipient into a private #recipient method does not break the existing spec that stubs ENV['DORM_GUARD_ALERT_TO']."
+
+specifications:
+  - "AlertChannels::EVENTS = %w[down up degraded] is the canonical event set."
+  - "AlertChannels::DeliveryError is the single error class the dispatcher catches per-channel; any other exception bubbles."
+  - "AlertChannels::Base#deliver raises NotImplementedError — minimal abstract interface; no template methods, no callbacks."
+  - "Email#deliver selects the mailer action by event (down → site_down, up → site_recovered, degraded → site_degraded) and calls deliver_later."
+  - "Email success = successful enqueue. Mailer-job failures at execution time are out-of-band from the channel's contract."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Kept DowntimeAlertMailer as the single mailer rather than renaming it to
+  SiteAlertMailer. Rename would cascade through Epic 3 references and provide
+  zero observable benefit — the mailer name is internal; subject lines
+  already carry the event atom.
+
+  The shared contract spec currently only pins the interface and event-set
+  acceptance. It does NOT assert actual delivery behavior — that lives in
+  each channel's own spec. Rationale: the contract must be runnable by
+  Slack/Webhook specs without needing WebMock stubs or Faraday setup that
+  would pollute a shared concern.
+
+interfaces:
+  consumed:
+    - "DowntimeAlertMailer.with(site:).site_down | site_recovered | site_degraded -> ActionMailer::MessageDelivery"
+  published:
+    - "AlertChannels::EVENTS -> [String]"
+    - "AlertChannels::DeliveryError (exception class)"
+    - "AlertChannels::Base#deliver(site:, event:, check_result:) [abstract]"
+    - "AlertChannels::Email#deliver(site:, event:, check_result:) -> true"
+    - "shared_examples 'an alert channel' (RSpec)"
+
+self_review:
+  consistency: "Email channel follows the existing mailer pattern from Epic 1; new actions mirror site_down in structure."
+  metz: "Email class is 24 lines; action_for is 5 lines exactly. Compliant."
+  tell_dont_ask: "Channel receives event atoms and routes internally — the caller does not inspect channel state."
+
+confidence: high
+reviewer_attention:
+  - "app/services/alert_channels/email.rb action_for — confirm every AlertChannels::EVENTS entry has a mapping; unmapped events raise DeliveryError, which is the right failure mode but worth double-checking the exhaustiveness"
+  - "spec/support/alert_channel_contract.rb — shared_examples is minimal (interface + event acceptance); if we later decide the contract should also assert truthy-return, that's a one-line addition"
