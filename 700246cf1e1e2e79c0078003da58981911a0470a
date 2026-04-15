@@ -1,0 +1,73 @@
+intent: >
+  Third and final concrete channel. Generic webhook with a stable JSON
+  payload consumers can lock to via the schema_version field. Same
+  Faraday+SsrfGuard+timeout pattern as Slack.
+
+slice: 6/11
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/services/alert_channels/webhook.rb
+    - spec/services/alert_channels/webhook_spec.rb
+  actual:
+    - app/services/alert_channels/webhook.rb
+    - spec/services/alert_channels/webhook_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/alert_channels/webhook_spec.rb
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "External consumers of the webhook (PagerDuty, IFTTT, custom handlers) will branch on schema_version before reading the rest of the payload. Documented in the class comment."
+  - "`example.com` resolves to a public IP in any test environment so SsrfGuard's DNS check passes before WebMock intercepts. Not using .invalid or a non-resolving test hostname."
+
+specifications:
+  - "PAYLOAD_SCHEMA_VERSION = 1. Bump only on shape-breaking changes; additive fields never bump the version."
+  - "Payload keys: schema_version, site{id,name,url}, event, check_result{status_code,response_time_ms,error_message,checked_at}, sent_at."
+  - "nil check_result is serialized as null (not as an empty object) — a handler that sees null check_result knows no check was associated."
+  - "SSRF guard blocks private ranges (tested with 10.0.0.1) — users cannot accidentally (or maliciously) paste an internal URL."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Chose to render check_result.checked_at as ISO8601 rather than epoch
+  seconds — ISO8601 is self-describing in logs and doesn't require the
+  consumer to know the timezone. The extra 20 chars per payload are
+  negligible at the operational scale of a single site.
+
+  build_payload is a plain Ruby hash rather than an ActiveModel::Serializer
+  or jbuilder template. Channels are few, payloads are small, and keeping
+  it inline means the class file shows the exact wire format at a glance.
+
+interfaces:
+  consumed:
+    - "SsrfGuard (Faraday middleware, Epic 4)"
+  published:
+    - "AlertChannels::Webhook#deliver(site:, event:, check_result:, target:) -> true"
+    - "AlertChannels::Webhook::PAYLOAD_SCHEMA_VERSION (Integer)"
+
+self_review:
+  consistency: "Structurally identical to AlertChannels::Slack. Both use the same connection builder pattern; both raise DeliveryError on the same failure classes."
+  metz: "Webhook class is 69 lines; deliver is 10, build_payload is 13, serialize_check_result is 9. Compliant."
+  security: "SSRF guard spec pins the private-range block. If a test passes for 10.0.0.1 today and fails after a middleware refactor, the regression catches it."
+
+confidence: high
+reviewer_attention:
+  - "app/services/alert_channels/webhook.rb:30-65 build_payload — if the payload shape is going to be externally documented, the class comment IS the contract. Any edit here is a schema change."
