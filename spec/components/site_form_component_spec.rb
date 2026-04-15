@@ -152,4 +152,59 @@ RSpec.describe SiteFormComponent, type: :component do
       expect(page).to have_css("p.text-error", minimum: 3)
     end
   end
+
+  describe "alert noise-control fields" do
+    before do
+      with_request_url "/sites/new" do
+        render_inline(described_class.new(site: new_site))
+      end
+    end
+
+    it "renders the Alert noise controls divider" do
+      expect(page).to have_css("div.divider", text: "Alert noise controls")
+    end
+
+    it "renders the cooldown_minutes number input" do
+      expect(page).to have_css("input[name='site[cooldown_minutes]'].input.input-bordered")
+    end
+
+    it "renders the quiet_hours_start and quiet_hours_end time inputs" do
+      expect(page).to have_css("input[name='site[quiet_hours_start]'][type='time']")
+      expect(page).to have_css("input[name='site[quiet_hours_end]'][type='time']")
+    end
+
+    it "renders the quiet_hours_timezone select populated with named zones" do
+      expect(page).to have_css("select[name='site[quiet_hours_timezone]'].select.select-bordered")
+      # ActiveSupport::TimeZone.all exposes friendly Rails names (mapped), not raw IANA identifiers.
+      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='Eastern Time (US & Canada)']")
+      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='UTC']")
+    end
+
+    it "offers a blank option that falls back to the Rails default time zone" do
+      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='']", text: /default Rails/)
+    end
+
+    it "describes the critical override in help text" do
+      expect(page).to have_text(/down.*still fire/)
+    end
+  end
+
+  describe "noise-control validation rendering" do
+    it "flags quiet_hours_end as invalid when only one of the pair is set" do
+      invalid_site = Site.new(
+        name: "Example",
+        url: "https://example.com",
+        interval_seconds: 60,
+        quiet_hours_start: "22:00",
+        quiet_hours_end: nil
+      )
+      invalid_site.valid?
+
+      with_request_url "/sites/new" do
+        render_inline(described_class.new(site: invalid_site))
+      end
+
+      expect(page).to have_css("input[name='site[quiet_hours_end]'].input-error")
+    end
+  end
 end

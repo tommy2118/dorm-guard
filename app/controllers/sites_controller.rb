@@ -49,7 +49,8 @@ class SitesController < ApplicationController
     params.expect(site: [
       :name, :url, :interval_seconds, :check_type,
       :tls_port, :tcp_port, :dns_hostname, :content_match_pattern,
-      :follow_redirects, :expected_status_codes, :slow_threshold_ms
+      :follow_redirects, :expected_status_codes, :slow_threshold_ms,
+      :cooldown_minutes, :quiet_hours_start, :quiet_hours_end, :quiet_hours_timezone
     ])
   end
 end

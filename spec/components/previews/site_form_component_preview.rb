@@ -26,4 +26,30 @@ class SiteFormComponentPreview < ViewComponent::Preview
     site.valid?
     render(SiteFormComponent.new(site: site))
   end
+
+  # Slice 8a — noise control variants.
+  def with_quiet_hours
+    render(SiteFormComponent.new(
+      site: Site.new(
+        name: "Example",
+        url: "https://example.com",
+        interval_seconds: 60,
+        cooldown_minutes: 10,
+        quiet_hours_start: "22:00",
+        quiet_hours_end: "06:00",
+        quiet_hours_timezone: "America/New_York"
+      )
+    ))
+  end
+
+  def noise_controls_disabled
+    render(SiteFormComponent.new(
+      site: Site.new(
+        name: "Always-on",
+        url: "https://example.com",
+        interval_seconds: 60,
+        cooldown_minutes: 0
+      )
+    ))
+  end
 end

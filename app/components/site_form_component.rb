@@ -29,4 +29,8 @@ class SiteFormComponent < ApplicationComponent
   def check_type_options
     CHECK_TYPE_LABELS.map { |value, label| [ label, value ] }
   end
+
+  def timezone_options
+    ActiveSupport::TimeZone.all.map { |tz| [ tz.to_s, tz.name ] }
+  end
 end
