@@ -182,7 +182,16 @@ jobs:
           # The droplet IP is hardcoded in config/deploy.yml (servers.web).
           # Keeping it duplicated here is a smell we accept for MVP —
           # a future ops epic can extract both to a single source.
-          ssh-keyscan -H 104.236.125.236 >> ~/.ssh/known_hosts
+          #
+          # -t explicitly lists key types because Kamal's Net::SSH client
+          # negotiates ED25519 preferentially; a partial ssh-keyscan
+          # response that misses ED25519 causes Net::SSH::HostKeyMismatch
+          # during `kamal deploy` even though the stored key is technically
+          # valid. Pinning -t rsa,ecdsa,ed25519 guarantees all three key
+          # types land in known_hosts regardless of ssh-keyscan version or
+          # server responsiveness. -T 15 gives the scan headroom on a
+          # slow-booting droplet.
+          ssh-keyscan -t rsa,ecdsa,ed25519 -T 15 -H 104.236.125.236 >> ~/.ssh/known_hosts
 
       - name: Write .env from GitHub repo secrets
         run: |
