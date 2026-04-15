@@ -1,0 +1,90 @@
+intent: >
+  Give Site the noise-control surface that AlertDispatcher will gate on: per-event
+  cooldown (not per-channel) and quiet hours with a critical-override semantics.
+  Inert until slice 7a.
+
+slice: 2/11
+kind: feature
+behavior_change: additive
+
+reversibility: entangled  # adds schema columns
+
+scope:
+  declared:
+    - db/migrate/20260415120002_add_alert_noise_controls_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  actual:
+    - db/migrate/20260415120002_add_alert_noise_controls_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb  # new "alert noise controls" describe block (20 examples)
+
+lint:
+  run: "(skipped — no linter wired in the project)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured in the dorm-guard repo."
+
+assumptions:
+  - "SQLite3 stores :time columns as strings but ActiveRecord exposes them as Time objects with hour/min/sec accessors."
+  - "ActiveSupport::TimeZone[name] returns nil for unknown zones, so a cheap truthy check validates the name."
+  - "Rails.application.config.time_zone (UTC by default) is the right fallback when quiet_hours_timezone is nil."
+
+specifications:
+  - "Per-event cooldown: Site#alert_cooldown_expired?(event) reads last_alerted_events[event.to_s] and compares against cooldown_minutes.minutes.ago."
+  - "Site#record_alert_sent!(event) merges {event.to_s => now.iso8601} into last_alerted_events and saves."
+  - "Quiet hours: nil start+end = no suppression; start <= end is same-day; start > end is overnight (wrap-around); boundary is inclusive-start, exclusive-end."
+  - "Quiet hours validation: start and end must both be set or both nil; timezone must be a valid ActiveSupport::TimeZone name if present."
+
+deviations_from_plan: >
+  Dropped the planned `null: false, default: "{}"` on last_alerted_events.
+  Serialize with type: Hash reads nil-in-db as {}, and Rails 8's persistence
+  path was writing nil on INSERT for new records — fighting that would have
+  required either after_initialize gymnastics or an attribute API change.
+  Nullable column + serializer default is the simpler, idiomatic answer
+  and changes zero observable semantics. Noted for the decision record.
+
+trade_offs: >
+  seconds_since_midnight() compares integer seconds rather than Time/DateTime
+  objects. This is safe for same-day + overnight windows and immune to DST
+  boundary issues because the comparison happens after `.in_time_zone(zone)`
+  converts the current moment to the site's local clock. Alternative (direct
+  Time arithmetic) was rejected because it introduces date-rollover edge
+  cases that integer-seconds avoids.
+
+interfaces:
+  published:
+    - "Site#alert_cooldown_expired?(event, now = Time.current) -> Boolean"
+    - "Site#record_alert_sent!(event, now = Time.current) -> Site"
+    - "Site#in_quiet_hours?(now = Time.current) -> Boolean"
+
+self_review:
+  consistency: "Serialize pattern matches Site#expected_status_codes (site.rb:16, now 17)."
+  metz: "Longest new method is in_quiet_hours? at 14 lines — breaks Metz's 5-line rule but the alternative is 3 one-line helpers that fragment the intent. Accepted."
+  security: "No new external inputs. Timezone name is validated against ActiveSupport::TimeZone lookup before use."
+
+principle_violations:
+  - rule: "Sandi Metz 5-line method rule"
+    location: "app/models/site.rb in_quiet_hours? (14 lines)"
+    justification: "Straight-line: zone lookup, integer conversion, window branch. Splitting would make the overnight wrap-around case harder to follow."
+    considered_alternatives:
+      - "Extract a QuietHoursWindow value object — rejected as premature given this is the only caller."
+      - "Split the same-day/overnight branches into two private methods — rejected as hiding the core asymmetry."
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb:109-123 — in_quiet_hours? window logic (the overnight wrap case is the one that bites in production)"
+  - "app/models/site.rb:94-102 — alert_cooldown_expired? returning true on nil/blank/unparseable timestamps (fail-open is the right call here but worth confirming)"
