@@ -1,0 +1,75 @@
+intent: >
+  Introduce the AlertPreference model as the per-site routing record for Epic 6.
+  Inert on its own — later slices (6, 7a, 8b) will consume it.
+
+slice: 1/11
+kind: feature
+behavior_change: additive
+
+reversibility: entangled  # adds a migration + new table
+
+scope:
+  declared:
+    - app/models/alert_preference.rb
+    - db/migrate/20260415120001_create_alert_preferences.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - spec/models/alert_preference_spec.rb
+  actual:
+    - app/models/alert_preference.rb
+    - db/migrate/20260415120001_create_alert_preferences.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - spec/models/alert_preference_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+  coverage_delta: "+model coverage for AlertPreference"
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/alert_preference_spec.rb
+
+lint:
+  run: (skipped — no linter wired in the project yet)
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured in the dorm-guard repo."
+
+assumptions:
+  - "URI::MailTo::EMAIL_REGEXP is the project's accepted email-format boundary (matches User model in Epic 4)."
+  - "Rails 8's `normalizes` runs before `before_validation` callbacks — the events normalizer sees the stripped target."
+  - "SQLite will preserve the JSON-serialized array exactly as round-tripped (matches Epic 2's expected_status_codes pattern)."
+
+specifications:
+  - "AlertPreference::EVENTS = %w[down up degraded] is the canonical event set referenced across the epic."
+  - "Target validation branches on channel: email uses URI::MailTo::EMAIL_REGEXP; slack/webhook parse via URI.parse and require scheme=https, non-blank host, nil userinfo."
+  - "Events are normalized (map-to-s, strip, reject-blank, uniq) BEFORE validation."
+  - "Sites cascade-destroy their alert preferences (has_many :alert_preferences, dependent: :destroy)."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Kept target polymorphic (one string column, channel-switched validation) rather than
+  channel-specific columns or STI. Future split is a 3-line rename migration if we ever need it.
+  Uniqueness across (site_id, channel, target) is NOT enforced — a site can hold duplicate
+  Slack prefs. Noted in the plan; revisit if it becomes a support pain.
+
+interfaces:
+  published:
+    - "AlertPreference.new(site:, channel:, target:, events:, enabled:)"
+    - "AlertPreference::EVENTS -> %w[down up degraded]"
+    - "Site#alert_preferences -> ActiveRecord::Relation<AlertPreference>"
+
+self_review:
+  consistency: "Matches Epic 2's serialize-JSON-array pattern (Site#expected_status_codes at site.rb:16)."
+  metz: "AlertPreference is 72 lines; all private methods ≤7 lines. Acceptable by the spirit of Metz's rules (validation branches are straight-line)."
+  security: "No SSRF exposure here — this is the model boundary. SsrfGuard will run at delivery time in slices 4/5/6."
+
+confidence: high
+reviewer_attention:
+  - "app/models/alert_preference.rb:47-75 — the URI.parse-based URL validation branches; make sure I haven't let any malformed URL through."
