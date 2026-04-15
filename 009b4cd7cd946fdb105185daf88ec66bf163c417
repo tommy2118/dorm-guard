@@ -1,0 +1,85 @@
+intent: >
+  Give operators a UI for the slice-2 noise controls on the existing Site
+  form. First time those columns become user-editable.
+
+slice: 8a/11
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/components/site_form_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/requests/sites_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  actual:
+    - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb
+    - app/controllers/sites_controller.rb
+    - spec/components/site_form_component_spec.rb
+    - spec/requests/sites_spec.rb
+    - spec/components/previews/site_form_component_preview.rb
+  drift:
+    - app/components/site_form_component.rb  # added #timezone_options helper; consumer of the change, below the bar for a separate slice
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/components/site_form_component_spec.rb  # 7 new examples in two describe blocks
+    - spec/requests/sites_spec.rb  # 2 new examples pinning create round-trip + timezone preservation
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "ActiveSupport::TimeZone.all returns the Rails-curated friendly name list, NOT raw IANA identifiers. The Site model validates against ActiveSupport::TimeZone[name] which accepts both forms, so a user could theoretically POST 'America/New_York' and it would validate — but the UI only offers the friendly names."
+  - "time_field input renders an HH:MM format that Rails parses back into a Time with today's date as context. The Site#in_quiet_hours? method reads .hour/.min/.sec so the stored value's date component is irrelevant."
+
+specifications:
+  - "SiteFormComponent renders a 'divider' labeled 'Alert noise controls' between the check-config section and the submit actions."
+  - "Cooldown help text is 'Minimum minutes between alerts for the same event type. Applied per-event (down / up / degraded).'"
+  - "Quiet hours help text references the drop-not-defer semantic: 'down alerts still fire but up and degraded alerts are silently dropped (not deferred).'"
+  - "Blanking quiet_hours_start AND quiet_hours_end via the form preserves quiet_hours_timezone on the record — tested in spec/requests/sites_spec.rb."
+  - "SitesController#site_params permits: cooldown_minutes, quiet_hours_start, quiet_hours_end, quiet_hours_timezone (alongside the existing attributes)."
+
+deviations_from_plan: >
+  Drifted into site_form_component.rb to add #timezone_options — the helper
+  doesn't live on the view since computing ActiveSupport::TimeZone.all inside
+  an ERB template is noisy. Same pattern as the existing #check_type_options
+  on line 29.
+
+trade_offs: >
+  Using ActiveSupport::TimeZone.all (friendly names) rather than a raw IANA
+  list. Friendly names are more discoverable for ops users ("Eastern Time
+  (US & Canada)" vs "America/New_York"). Users who prefer IANA can still
+  paste directly via API or console — the model validator accepts both.
+
+  The cooldown field's help text mentions all three event atoms to make the
+  per-event-not-per-channel decision visible at the point of configuration,
+  not buried in the decision record.
+
+interfaces:
+  consumed:
+    - "Site attributes from slice 2 (cooldown_minutes, quiet_hours_start, quiet_hours_end, quiet_hours_timezone)"
+  published: []  # SiteFormComponent signature unchanged
+
+self_review:
+  consistency: "Matches the existing form-control + card-body + divider pattern established by Epic 2's site form structure."
+  metz: "SiteFormComponent is 37 lines (up from 33); timezone_options is 3 lines. Compliant."
+  design: "Divider + descriptive help text under each new field are cheap ways to communicate the semantic of cooldown + quiet hours without dumping docs."
+
+confidence: high
+reviewer_attention:
+  - "app/components/site_form_component.html.erb:46-102 — new section layout; check that the card-actions (cancel + submit) still sit at the bottom after the noise-control block"
+  - "spec/requests/sites_spec.rb new timezone-preservation test — this pins the behavior the plan called out; if a future controller refactor stops preserving the zone on blank-both, this test should catch it"
