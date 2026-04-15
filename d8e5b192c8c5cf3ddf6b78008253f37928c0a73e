@@ -1,0 +1,88 @@
+intent: >
+  Fix PR #26 review UX bug: a parse failure on expected_status_codes wiped
+  the user's input on form redisplay, forcing them to retype their bad
+  input from scratch to fix it.
+
+slice: 13/13
+kind: fix
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared:
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  actual:
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "The @expected_status_codes_parse_error instance variable survives from the setter call through the validator and into the form re-render, because ActiveRecord doesn't reinstantiate the object between failed save and the controller's render :new"
+  - "ERB's form.text_field reads the value: option and displays it verbatim, so returning the raw bad string from the display helper puts it directly in the input's value attribute"
+
+specifications:
+  - "expected_status_codes_for_display returns the raw @expected_status_codes_parse_error value (as a string) when a parse error is pending, otherwise the joined array or empty string"
+  - "The display helper's return type is always String — a parse error converts to String via to_s (handles nil/empty input cases)"
+  - "After a parse failure, the attribute is nil BUT the display helper returns the original bad input, so the user sees their own text on the re-rendered form alongside the validation error"
+
+deviations_from_plan: >
+  pr-review-driven slice. Pure UX fix, no architectural change.
+
+addresses:
+  - "#26"
+
+trade_offs: >
+  Stored the raw input in an instance variable rather than a transient
+  model attribute or a separate error object. Cost: the display helper
+  has hidden instance-variable state. Benefit: matches the existing
+  setter's pattern (the setter already writes to @expected_status_codes_parse_error
+  for the validator to read) and doesn't require a new column or a
+  changed serialization format.
+
+interfaces:
+  consumed: []
+  published:
+    - "Site#expected_status_codes_for_display -> String (now preserves raw invalid input on parse failure)"
+
+self_review:
+  tests: >
+    One new case: set an invalid string, call valid? to trigger the parse-
+    error validator, assert (1) expected_status_codes is nil (setter stored
+    nil on parse failure), (2) expected_status_codes_for_display returns
+    the raw bad string, (3) errors[:expected_status_codes] is populated.
+    All three assertions on one example because they're one flow — the
+    user-facing round-trip.
+  consistency: >
+    The early-return pattern in expected_status_codes_for_display matches
+    the early-return used in validate_expected_status_codes just above
+    it — both read the same @expected_status_codes_parse_error ivar.
+  metz: >
+    Measured. site.rb grew from 123 lines (after Slice 12) to 128;
+    method count unchanged at 8. expected_status_codes_for_display is
+    now 4 body lines — under the 5-line rule.
+  api: >
+    Additive at the Ruby level: expected_status_codes_for_display now
+    has a conditional branch that didn't exist before. Backwards
+    compatible for any caller that was reading the helper when parse_error
+    was absent.
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb:65-72"  # the conditional early-return that reads @expected_status_codes_parse_error
