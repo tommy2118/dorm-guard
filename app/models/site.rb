@@ -115,6 +115,11 @@ class Site < ApplicationRecord
     self.dns_hostname = nil unless dns?
     self.content_match_pattern = nil unless content_match?
     self.slow_threshold_ms = nil unless http? || content_match?
+    self.expected_status_codes = nil unless http? || content_match?
+    # follow_redirects is boolean + null: false, so we can't null it.
+    # Reset to the DB default (true) on non-HTTP flips so the row doesn't
+    # carry a stale "false" value from a previous :http config.
+    self.follow_redirects = true unless http? || content_match?
     self.url = nil if dns?
   end
 end

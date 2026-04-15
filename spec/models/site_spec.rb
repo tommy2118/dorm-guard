@@ -201,6 +201,58 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  # PR #26 review finding: clear_irrelevant_config must also scrub
+  # HTTP-only config (expected_status_codes, follow_redirects) when
+  # flipping to a non-HTTP / non-content-match type, otherwise the
+  # "normalizes stale config on every save" claim in the PR notes is
+  # false for those two fields.
+  describe "clear_irrelevant_config scrubs HTTP options on non-HTTP flips" do
+    %i[ssl tcp dns].each do |target_type|
+      context "when flipping from :http to :#{target_type}" do
+        let(:site) do
+          described_class.create!(
+            valid_attrs.merge(
+              check_type: :http,
+              expected_status_codes: [ 200, 301 ],
+              follow_redirects: false
+            )
+          )
+        end
+
+        let(:flip_attrs) do
+          case target_type
+          when :ssl then { check_type: :ssl, tls_port: 443 }
+          when :tcp then { check_type: :tcp, tcp_port: 22 }
+          when :dns then { check_type: :dns, dns_hostname: "example.com" }
+          end
+        end
+
+        before { site.update!(flip_attrs) }
+
+        it "nulls expected_status_codes" do
+          expect(site.reload.expected_status_codes).to be_nil
+        end
+
+        it "resets follow_redirects to the DB default (true)" do
+          expect(site.reload.follow_redirects).to be true
+        end
+      end
+    end
+
+    it "preserves HTTP options for :content_match sites" do
+      site = described_class.create!(
+        valid_attrs.merge(
+          check_type: :http,
+          expected_status_codes: [ 200, 301 ],
+          follow_redirects: false
+        )
+      )
+      site.update!(check_type: :content_match, content_match_pattern: "ok")
+      expect(site.reload.expected_status_codes).to eq([ 200, 301 ])
+      expect(site.reload.follow_redirects).to be false
+    end
+  end
+
   describe "expected_status_codes parsing + validation" do
     it "stores nil for a blank string" do
       site = described_class.new(valid_attrs.merge(expected_status_codes: ""))
