@@ -169,16 +169,23 @@ self_review:
     in the Site model; naming pattern matches standard Rails (attribute=
     override + super).
   metz: >
-    Measured. http_checker.rb is 69 lines, 7 methods. check is 5 body
-    lines + rescue. connection gains one line (the conditional
-    f.response :follow_redirects). site.rb is 115 lines, 15 methods
-    including private helpers — over the 100-line Metz limit. Two of the
-    new methods (parse_expected_status_codes 9 body lines,
-    validate_expected_status_codes 11 body lines) are the size outliers.
-    Splitting validate_expected_status_codes into two validators (one for
-    parse error, one for range) is a clean refactor candidate but not
-    done mid-slice. Noted as a follow-up for the eventual Site model
-    decomposition (likely a post-epic chore).
+    Measured post-hoc (corrected from initial estimate). http_checker.rb
+    is 69 lines, 7 methods. check is 5 body lines + rescue. connection
+    gains one line (the conditional f.response :follow_redirects).
+    site.rb is 113 lines, 8 methods (expected_status_codes=,
+    expected_status_codes_for_display, due?, healthy?, failing?,
+    parse_expected_status_codes, validate_expected_status_codes,
+    clear_irrelevant_config) — over the 100-line Metz limit. The earlier
+    version of this note claimed "115 lines, 15 methods" which was
+    estimated rather than measured; pr-review flagged the discrepancy
+    and the note was amended in place. Two of the new private helpers
+    (parse_expected_status_codes, validate_expected_status_codes) are
+    the size outliers; splitting validate_expected_status_codes into
+    two validators (one for parse error, one for range) is a clean
+    refactor candidate but not done mid-slice. Noted as a follow-up
+    for the eventual Site model decomposition (likely a post-epic
+    chore). **Lesson: run wc -l and grep -c '^\s*def ' rather than
+    eyeballing the diff.**
   duplication: >
     Six SiteForm:: leaf components now — SslFieldsComponent, TcpFieldsComponent,
     DnsFieldsComponent, ContentMatchFieldsComponent, HttpOptionsFieldsComponent,
