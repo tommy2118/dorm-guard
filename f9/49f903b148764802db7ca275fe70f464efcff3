@@ -9,15 +9,20 @@ behavior_change: additive  # from the dispatcher's perspective; breaking for tes
 reversibility: reversible
 
 scope:
+  # check_types_smoke_spec was retroactively declared during pre-merge
+  # cleanup — it's an Epic 5 smoke spec that shared the "single-check commit"
+  # assumption with the job spec and needed the same 2.times { perform_now }
+  # fix. Self-declared as drift at commit time; now surfaced as a planned
+  # downstream consumer of slice 3's debounce.
   declared:
     - app/jobs/perform_check_job.rb
     - spec/jobs/perform_check_job_spec.rb
+    - spec/system/check_types_smoke_spec.rb  # Epic 5 smoke spec, same debounce fix as the job spec
   actual:
     - app/jobs/perform_check_job.rb
     - spec/jobs/perform_check_job_spec.rb
     - spec/system/check_types_smoke_spec.rb
-  drift:
-    - spec/system/check_types_smoke_spec.rb  # Epic 5 smoke spec also assumed single-check commit; fixed in place
+  drift: []
 
 proof:
   tests_run: bin/dc bundle exec rspec
