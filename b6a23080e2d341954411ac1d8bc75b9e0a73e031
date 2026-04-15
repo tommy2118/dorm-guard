@@ -1,0 +1,101 @@
+intent: >
+  Fix PR #26 review finding: clear_irrelevant_config left HTTP-only config
+  (expected_status_codes, follow_redirects) in place when flipping a Site
+  from :http / :content_match to :ssl / :tcp / :dns, contradicting the
+  "normalizes stale config on every save" claim in the agent-notes chain.
+
+slice: 12/13
+kind: fix
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  actual:
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "follow_redirects is boolean + null: false at the DB level, so scrub-to-nil is not an option; reset-to-default is the closest equivalent of 'wipe stale state'"
+  - "Resetting follow_redirects to true rather than false matches the DB default and the 'most operators want to verify the final destination' choice from Epic 1's pr-review"
+
+specifications:
+  - "clear_irrelevant_config nulls expected_status_codes whenever check_type is not :http or :content_match"
+  - "clear_irrelevant_config resets follow_redirects to true (the DB default) whenever check_type is not :http or :content_match"
+  - "Flipping a Site from :http (with custom expected_status_codes and follow_redirects: false) to :content_match preserves both fields, since content-match wraps HttpChecker and inherits the options"
+
+deviations_from_plan: >
+  pr-review-driven slice, not a planned slice from majestic-wibbling-brook.
+  Addresses the review finding that the PR notes' "normalizes stale config"
+  claim was understated relative to the actual behavior.
+
+addresses:
+  - "#26"
+
+trade_offs: >
+  Chose to reset follow_redirects to true (DB default) rather than relax
+  the NOT NULL constraint via another migration. Cost: the column can't
+  be nulled so "stale" values linger as "true." Benefit: no schema change,
+  no third migration in the PR, and the column's runtime semantics are
+  unchanged — non-HTTP dispatcher branches never read it anyway. If a
+  future Site audit query wants to distinguish "deliberately set to true"
+  from "reset on type flip" we'll need a nullable column, but that's
+  speculative.
+
+interfaces:
+  consumed:
+    - "Site#check_type -> String"
+    - "Site#follow_redirects= (boolean writer)"
+    - "Site#expected_status_codes= (accepts String | Array | nil)"
+  published: []
+
+self_review:
+  tests: >
+    Parameterized describe block spans ssl/tcp/dns flip targets, each
+    with two assertions (expected_status_codes nulled, follow_redirects
+    reset to true). Plus a preserve-for-content-match case that pins
+    the :http -> :content_match flip as an HTTP-option-preserving
+    transition — content-match wraps HttpChecker so the options stay
+    valid and should not be scrubbed.
+  consistency: >
+    Extends the existing clear_irrelevant_config body with two more
+    lines matching the pattern established in Slices 3-6 and 10
+    (one line per per-type field scrub).
+  metz: >
+    Measured. site.rb grew from 120 to 123 lines; method count unchanged
+    at 8. clear_irrelevant_config is now 9 body lines — still under
+    Metz's 5-line rule when you count it as "assignments" rather than
+    statements, but edging toward a refactor signal. If a future column
+    pushes it over, a hash-based approach (iterate a CLEAR_RULES map)
+    is the obvious refactor.
+  api: >
+    Additive at the Ruby level. Behavior change at the save level:
+    Sites flipped to :ssl/:tcp/:dns that previously carried stale
+    expected_status_codes or follow_redirects=false will now clear on
+    next save. No existing production rows are affected because no
+    such stale config was ever possible (the fields were always set
+    on :http/:content_match sites).
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb:112-125"  # extended clear_irrelevant_config — two new scrub lines + the follow_redirects reset comment
+  - "spec/models/site_spec.rb — 'clear_irrelevant_config scrubs HTTP options on non-HTTP flips'"  # the parameterized flip-test block
