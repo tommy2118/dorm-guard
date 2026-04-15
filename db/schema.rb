@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_15_120002) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_15_120003) do
   create_table "alert_preferences", force: :cascade do |t|
     t.integer "channel", null: false
     t.datetime "created_at", null: false
@@ -44,6 +44,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_15_120002) do
   end
 
   create_table "sites", force: :cascade do |t|
+    t.integer "candidate_status"
+    t.datetime "candidate_status_at"
     t.integer "check_type", default: 0, null: false
     t.string "content_match_pattern"
     t.integer "cooldown_minutes", default: 5, null: false

@@ -678,4 +678,87 @@ RSpec.describe Site, type: :model do
       end
     end
   end
+
+  describe "#propose_status (N=2 debounce)" do
+    let(:site) { described_class.new(valid_attrs) }
+
+    it "stashes the first candidate from unknown and returns unknown" do
+      result = site.propose_status(:up)
+      expect(result).to eq("unknown")
+      expect(site.status).to eq("unknown")
+      expect(site.candidate_status).to eq("up")
+    end
+
+    it "commits on the second consecutive same-status check" do
+      site.propose_status(:up)
+      result = site.propose_status(:up)
+      expect(result).to eq("up")
+      expect(site.status).to eq("up")
+      expect(site.candidate_status).to be_nil
+    end
+
+    it "commits unknown → down → down (the critical-alert path)" do
+      site.propose_status(:down)
+      expect(site.status).to eq("unknown")
+      result = site.propose_status(:down)
+      expect(result).to eq("down")
+      expect(site.status).to eq("down")
+    end
+
+    it "clears a pending candidate when the confirmed status is seen again" do
+      site.status = "up"
+      site.propose_status(:down)
+      expect(site.candidate_status).to eq("down")
+      site.propose_status(:up)
+      expect(site.candidate_status).to be_nil
+      expect(site.status).to eq("up")
+    end
+
+    it "ignores a single blip in the middle of a stable run" do
+      site.status = "up"
+      site.propose_status(:up)   # stable
+      site.propose_status(:down) # blip candidate
+      site.propose_status(:up)   # blip cleared
+      expect(site.status).to eq("up")
+      expect(site.candidate_status).to be_nil
+    end
+
+    it "commits down on the fifth check of a flap sequence" do
+      site.status = "up"
+      results = [:down, :up, :down, :up, :down].map { |s| site.propose_status(s) }
+      # Trace: candidate=down, cleared, candidate=down, cleared, candidate=down → no commit yet
+      expect(results).to eq(%w[up up up up up])
+      expect(site.status).to eq("up")
+      expect(site.candidate_status).to eq("down")
+    end
+
+    it "handles degraded transitions the same way as up/down" do
+      site.status = "up"
+      site.propose_status(:degraded)
+      expect(site.candidate_status).to eq("degraded")
+      site.propose_status(:degraded)
+      expect(site.status).to eq("degraded")
+    end
+
+    it "records candidate_status_at when a new candidate is stashed" do
+      now = Time.zone.parse("2026-04-15T10:00:00Z")
+      site.propose_status(:up, now)
+      expect(site.candidate_status_at).to eq(now)
+    end
+
+    it "does not persist any changes (caller owns persistence)" do
+      site.save!
+      original_updated_at = site.updated_at
+
+      # Jump the clock so updated_at would visibly change if a save happened
+      travel_to(10.minutes.from_now) do
+        site.propose_status(:up)
+      end
+
+      expect(site).to be_changed
+      site.reload
+      expect(site.updated_at).to eq(original_updated_at)
+      expect(site.candidate_status).to be_nil
+    end
+  end
 end

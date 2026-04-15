@@ -11,6 +11,9 @@ class Site < ApplicationRecord
   # Integer 3 is intentionally skipped. :degraded is appended at 4 so
   # :down stays at 2 and existing stored values never need to renumber.
   enum :status, { unknown: 0, up: 1, down: 2, degraded: 4 }, default: :unknown
+  # candidate_status reuses the same integer mapping as status; the :candidate_ prefix
+  # avoids the predicate collision that Rails' enum would generate on raw aliasing.
+  enum :candidate_status, { unknown: 0, up: 1, down: 2, degraded: 4 }, prefix: :candidate, allow_nil: true
   enum :check_type, { http: 0, ssl: 1, tcp: 2, dns: 3, content_match: 4 }, default: :http
 
   serialize :expected_status_codes, coder: JSON
@@ -105,6 +108,34 @@ class Site < ApplicationRecord
   def record_alert_sent!(event, now = Time.current)
     merged = (last_alerted_events || {}).merge(event.to_s => now.iso8601)
     update!(last_alerted_events: merged)
+  end
+
+  # N=2 consecutive-check debounce. Mutates self in memory only; the caller
+  # (PerformCheckJob#update_site) owns persistence and decides which attributes
+  # to save. Does not touch updated_at (no save here). Returns the proposed
+  # effective status as a string so the caller can diff against the
+  # pre-proposal value.
+  #
+  # Rules (new_status is the status derived from the latest check):
+  #   - new_status matches the confirmed status → clear candidate, no change
+  #   - new_status matches the pending candidate → commit the new status
+  #   - new_status differs from both → pending candidate is replaced
+  def propose_status(new_status, now = Time.current)
+    new_status_str = new_status.to_s
+
+    if new_status_str == status
+      self.candidate_status = nil
+      self.candidate_status_at = nil
+    elsif new_status_str == candidate_status
+      self.status = new_status_str
+      self.candidate_status = nil
+      self.candidate_status_at = nil
+    else
+      self.candidate_status = new_status_str
+      self.candidate_status_at = now
+    end
+
+    status
   end
 
   def in_quiet_hours?(now = Time.current)

@@ -79,6 +79,10 @@ RSpec.configure do |config|
   # ViewComponent test helpers (render_inline, etc.) for component specs.
   config.include ViewComponent::TestHelpers, type: :component
 
+  # Time helpers (travel_to, freeze_time) for models/services that need to
+  # exercise time-dependent logic.
+  config.include ActiveSupport::Testing::TimeHelpers
+
   # Filter lines from Rails gems in backtraces.
   config.filter_rails_from_backtrace!
   # arbitrary gems may also be filtered via:
