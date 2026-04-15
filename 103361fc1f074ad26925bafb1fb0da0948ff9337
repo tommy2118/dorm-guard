@@ -1,0 +1,96 @@
+intent: >
+  Central routing service. This is the slice that makes all the pieces
+  slice 1-6 built into a coherent feature. Still isolated from
+  PerformCheckJob — slice 7b wires it in.
+
+slice: 7a/11
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/services/alert_dispatcher.rb
+    - spec/services/alert_dispatcher_spec.rb
+  actual:
+    - app/services/alert_dispatcher.rb
+    - spec/services/alert_dispatcher_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/alert_dispatcher_spec.rb  # 29 examples across 7 describe blocks
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "Preference iteration order is determined by insertion order (the .where(enabled: true).select returns AR-default order). Not semantically important — the dispatcher contract guarantees 'any successful delivery records the cooldown' regardless of order."
+
+specifications:
+  - "Transition mapping: unknown → up/degraded returns nil (no alert). unknown → down returns 'down' (new failure is worth alerting). Same-state transitions return nil. Everything else maps to the destination state as a string."
+  - "Quiet-hours gate: non-:down events during in_quiet_hours? are dropped entirely. :down always proceeds (critical override) and records its cooldown normally."
+  - "Event-level cooldown: site.alert_cooldown_expired?(event) is checked ONCE outside the per-preference loop. Cooldown is event-level, not channel-level."
+  - "Partial success: any successful delivery sets delivered_any = true. After the loop, site.record_alert_sent!(event) fires once if delivered_any. A subsequent call with the same (site, event) inside cooldown returns early — no retry for failed channels until cooldown expires or a new transition."
+  - "Per-channel error isolation: AlertChannels::DeliveryError is caught, logged at WARN, and the loop continues. Any other exception type bubbles and the job's retry policy takes over."
+  - "Each channel instance is built fresh per dispatch (.new) — no memoization, no thread-safety surface."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Cooldown check is outside the per-preference loop, not inside. This means
+  a single recent cooldown blocks ALL channels for that event. The plan
+  locks this as "event-level, not channel-level" — channel-level would
+  require per-preference last_alerted_events storage, explicitly deferred.
+
+  eligible_preferences uses Array#select in Ruby rather than SQL filtering
+  on the events JSON column. SQLite's JSON1 functions exist but are not
+  universally consistent across versions; filtering in Ruby is trivially
+  cheap at the operational scale of a few preferences per site.
+
+  Channel classes are looked up via a frozen hash constant rather than
+  `constantize`. Faster, safer, and the registry is tiny. Adding a new
+  channel means editing one line.
+
+interfaces:
+  consumed:
+    - "Site#alert_preferences (association from slice 1)"
+    - "Site#in_quiet_hours? (slice 2)"
+    - "Site#alert_cooldown_expired?(event) (slice 2)"
+    - "Site#record_alert_sent!(event) (slice 2)"
+    - "AlertChannels::Email#deliver(site:, event:, check_result:, target:) (slice 4/5)"
+    - "AlertChannels::Slack#deliver(site:, event:, check_result:, target:) (slice 5)"
+    - "AlertChannels::Webhook#deliver(site:, event:, check_result:, target:) (slice 6)"
+    - "AlertChannels::DeliveryError (slice 4)"
+  published:
+    - "AlertDispatcher.call(site:, from:, to:, check_result:) -> void"
+    - "AlertDispatcher::EVENTS -> [String]"
+
+self_review:
+  consistency: "Structurally mirrors Epic 5's CheckDispatcher in shape (service object, class-level .call)."
+  metz: "AlertDispatcher is 76 lines; call is 25 lines (close to the line but branches are straight and the early-returns are the readability point), event_from_transition is 12 lines, eligible_preferences is 4 lines. Call method is the one at the edge of Metz's rule."
+  tell_dont_ask: "Site knows how to check its own cooldown + quiet hours and how to record an alert sent. Dispatcher orchestrates; Site does."
+  goos: "Dispatcher spec mocks the channel classes (instance_double); never mocks types we don't own. The channel specs mock Faraday at the HTTP boundary."
+
+principle_violations:
+  - rule: "Sandi Metz 5-line method rule"
+    location: "app/services/alert_dispatcher.rb #call (25 lines)"
+    justification: "Straight-line orchestration with 3 early returns and a single loop. Splitting into sub-methods would fragment the control flow and hide the early-return cascade that makes the quiet-hours/cooldown/enabled checks legible."
+    considered_alternatives:
+      - "Extract #dispatch_loop — rejected, the loop is only 10 lines and inlined makes the cooldown-recording contract visible."
+      - "Command pattern (Dispatch value object) — rejected as speculative; no second caller exists."
+
+confidence: high
+reviewer_attention:
+  - "app/services/alert_dispatcher.rb #call lines 25-45 — the cooldown write at line 47 (after the loop, only on delivered_any) is THE partial-success contract. The spec pins it but please read it against your mental model of 'what if Slack fails twice in a row' to confirm the behavior matches the plan."
+  - "app/services/alert_dispatcher.rb event_from_transition — the unknown→down branch is the only transition where 'from was unknown' still fires an alert. Double-check this matches the plan's 'first-ever failure is worth alerting' rule."
