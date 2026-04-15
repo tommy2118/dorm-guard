@@ -506,4 +506,176 @@ RSpec.describe Site, type: :model do
       expect(site).to be_due
     end
   end
+
+  describe "alert noise controls" do
+    describe "cooldown validation" do
+      it "defaults cooldown_minutes to 5" do
+        expect(described_class.new(valid_attrs).cooldown_minutes).to eq(5)
+      end
+
+      it "rejects a negative cooldown" do
+        site = described_class.new(valid_attrs.merge(cooldown_minutes: -1))
+        expect(site).not_to be_valid
+        expect(site.errors[:cooldown_minutes]).to be_present
+      end
+
+      it "accepts a zero cooldown" do
+        expect(described_class.new(valid_attrs.merge(cooldown_minutes: 0))).to be_valid
+      end
+    end
+
+    describe "#alert_cooldown_expired?" do
+      let(:site) { described_class.create!(valid_attrs.merge(cooldown_minutes: 5)) }
+
+      it "returns true when no event has been recorded" do
+        expect(site.alert_cooldown_expired?(:down)).to be(true)
+      end
+
+      it "returns true when the cooldown for the event has expired" do
+        site.update!(last_alerted_events: { "down" => 10.minutes.ago.iso8601 })
+        expect(site.alert_cooldown_expired?(:down)).to be(true)
+      end
+
+      it "returns false when the cooldown for the event is still active" do
+        site.update!(last_alerted_events: { "down" => 1.minute.ago.iso8601 })
+        expect(site.alert_cooldown_expired?(:down)).to be(false)
+      end
+
+      it "tracks events independently so down cooldown does not suppress up" do
+        site.update!(last_alerted_events: { "down" => 1.minute.ago.iso8601 })
+        expect(site.alert_cooldown_expired?(:up)).to be(true)
+      end
+    end
+
+    describe "#record_alert_sent!" do
+      let(:site) { described_class.create!(valid_attrs) }
+
+      it "persists the event timestamp as ISO8601" do
+        freeze_time = Time.zone.parse("2026-04-15T10:00:00Z")
+        site.record_alert_sent!(:down, freeze_time)
+        expect(site.reload.last_alerted_events).to include("down" => freeze_time.iso8601)
+      end
+
+      it "merges with existing event timestamps instead of replacing them" do
+        site.record_alert_sent!(:down, 5.minutes.ago)
+        site.record_alert_sent!(:up, Time.current)
+        expect(site.reload.last_alerted_events.keys).to contain_exactly("down", "up")
+      end
+    end
+
+    describe "quiet hours validation" do
+      it "is valid when both start and end are nil" do
+        expect(described_class.new(valid_attrs)).to be_valid
+      end
+
+      it "requires both start and end if either is present" do
+        site = described_class.new(valid_attrs.merge(quiet_hours_start: "22:00"))
+        expect(site).not_to be_valid
+        expect(site.errors[:quiet_hours_end]).to be_present
+      end
+
+      it "accepts a valid timezone name" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "America/New_York"
+        ))
+        expect(site).to be_valid
+      end
+
+      it "rejects an unknown timezone name" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "Middle-earth/Shire"
+        ))
+        expect(site).not_to be_valid
+        expect(site.errors[:quiet_hours_timezone]).to be_present
+      end
+    end
+
+    describe "#in_quiet_hours?" do
+      it "returns false when no window is configured" do
+        site = described_class.new(valid_attrs)
+        expect(site.in_quiet_hours?).to be(false)
+      end
+
+      it "returns true inside a same-day window" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "09:00",
+          quiet_hours_end: "17:00",
+          quiet_hours_timezone: "UTC"
+        ))
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 12, 0))).to be(true)
+      end
+
+      it "returns false outside a same-day window" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "09:00",
+          quiet_hours_end: "17:00",
+          quiet_hours_timezone: "UTC"
+        ))
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 18, 0))).to be(false)
+      end
+
+      it "treats the start boundary as in-window (inclusive)" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "09:00",
+          quiet_hours_end: "17:00",
+          quiet_hours_timezone: "UTC"
+        ))
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 9, 0))).to be(true)
+      end
+
+      it "treats the end boundary as out-of-window (exclusive)" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "09:00",
+          quiet_hours_end: "17:00",
+          quiet_hours_timezone: "UTC"
+        ))
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 17, 0))).to be(false)
+      end
+
+      it "handles an overnight window that wraps past midnight" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "UTC"
+        ))
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 23, 0))).to be(true)  # before midnight
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 3, 0))).to be(true)   # after midnight
+        expect(site.in_quiet_hours?(Time.utc(2026, 4, 15, 12, 0))).to be(false) # midday
+      end
+
+      it "falls back to Rails.application.config.time_zone when quiet_hours_timezone is nil" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "09:00",
+          quiet_hours_end: "17:00",
+          quiet_hours_timezone: nil
+        ))
+        # Default Rails time_zone is UTC unless the app overrides it.
+        default_zone = Rails.application.config.time_zone
+        now_in_default = Time.zone.parse("2026-04-15 12:00:00").in_time_zone(default_zone)
+        if now_in_default.hour.between?(9, 16)
+          expect(site.in_quiet_hours?(now_in_default)).to be(true)
+        end
+      end
+
+      it "respects DST transitions in America/New_York" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "America/New_York"
+        ))
+        # 2026-03-08 02:00 local is the spring-forward gap (skipped).
+        # 23:00 NY on 2026-03-07 is still in quiet hours.
+        spring_night = ActiveSupport::TimeZone["America/New_York"].local(2026, 3, 7, 23, 0)
+        expect(site.in_quiet_hours?(spring_night)).to be(true)
+
+        # 2026-11-01 01:30 NY happens twice due to fall-back; quiet hours still true.
+        fall_night = ActiveSupport::TimeZone["America/New_York"].local(2026, 11, 1, 1, 30)
+        expect(site.in_quiet_hours?(fall_night)).to be(true)
+      end
+    end
+  end
 end

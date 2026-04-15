@@ -14,6 +14,7 @@ class Site < ApplicationRecord
   enum :check_type, { http: 0, ssl: 1, tcp: 2, dns: 3, content_match: 4 }, default: :http
 
   serialize :expected_status_codes, coder: JSON
+  serialize :last_alerted_events, coder: JSON, type: Hash
 
   has_many :check_results, dependent: :destroy
   has_many :alert_preferences, dependent: :destroy
@@ -51,8 +52,13 @@ class Site < ApplicationRecord
   validates :slow_threshold_ms,
             numericality: { only_integer: true, in: SLOW_THRESHOLD_RANGE },
             allow_nil: true
+  validates :cooldown_minutes,
+            presence: true,
+            numericality: { only_integer: true, greater_than_or_equal_to: 0 }
 
   validate :validate_expected_status_codes
+  validate :validate_quiet_hours_pair
+  validate :validate_quiet_hours_timezone
 
   # Accepts either an array (round-tripped from the DB) or a string typed
   # into the form (e.g., "200, 301"). Parses strings into an integer array;
@@ -85,7 +91,65 @@ class Site < ApplicationRecord
     down?
   end
 
+  def alert_cooldown_expired?(event, now = Time.current)
+    events_hash = last_alerted_events || {}
+    last = events_hash[event.to_s]
+    return true if last.blank?
+
+    parsed = Time.zone.parse(last.to_s)
+    return true if parsed.nil?
+
+    parsed + cooldown_minutes.minutes <= now
+  end
+
+  def record_alert_sent!(event, now = Time.current)
+    merged = (last_alerted_events || {}).merge(event.to_s => now.iso8601)
+    update!(last_alerted_events: merged)
+  end
+
+  def in_quiet_hours?(now = Time.current)
+    return false if quiet_hours_start.blank? || quiet_hours_end.blank?
+
+    zone = resolved_quiet_hours_zone
+    local_now = now.in_time_zone(zone)
+    current_seconds = local_now.seconds_since_midnight.to_i
+    start_seconds = seconds_since_midnight(quiet_hours_start)
+    end_seconds = seconds_since_midnight(quiet_hours_end)
+
+    if start_seconds <= end_seconds
+      current_seconds >= start_seconds && current_seconds < end_seconds
+    else
+      current_seconds >= start_seconds || current_seconds < end_seconds
+    end
+  end
+
   private
+
+  def resolved_quiet_hours_zone
+    name = quiet_hours_timezone.presence || Rails.application.config.time_zone
+    ActiveSupport::TimeZone[name] || ActiveSupport::TimeZone["UTC"]
+  end
+
+  def seconds_since_midnight(time_value)
+    return 0 if time_value.nil?
+
+    time_value.hour * 3600 + time_value.min * 60 + time_value.sec
+  end
+
+  def validate_quiet_hours_pair
+    return if quiet_hours_start.nil? && quiet_hours_end.nil?
+    return if quiet_hours_start.present? && quiet_hours_end.present?
+
+    errors.add(:quiet_hours_end, "must be set together with quiet_hours_start")
+  end
+
+  def validate_quiet_hours_timezone
+    return if quiet_hours_timezone.blank?
+    return if ActiveSupport::TimeZone[quiet_hours_timezone]
+
+    errors.add(:quiet_hours_timezone, "is not a recognized ActiveSupport::TimeZone name")
+  end
+
 
   def parse_expected_status_codes(value)
     return nil if value.nil?
