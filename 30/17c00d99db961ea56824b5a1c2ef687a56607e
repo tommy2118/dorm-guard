@@ -14,14 +14,14 @@ scope:
     - db/schema.rb
     - app/models/site.rb
     - spec/models/site_spec.rb
+    - spec/rails_helper.rb  # retroactively declared during pre-merge cleanup; see deviations_from_plan
   actual:
     - db/migrate/20260415120003_add_candidate_status_to_sites.rb
     - db/schema.rb
     - app/models/site.rb
     - spec/models/site_spec.rb
     - spec/rails_helper.rb
-  drift:
-    - spec/rails_helper.rb  # wired ActiveSupport::Testing::TimeHelpers to support the "no updated_at mutation" spec; test-only, below the bar for a separate slice
+  drift: []
 
 proof:
   tests_run: bin/dc bundle exec rspec
