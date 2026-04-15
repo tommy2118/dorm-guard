@@ -1,0 +1,90 @@
+intent: >
+  Pin ssh-keyscan key types in the CI deploy job so Kamal's Net::SSH
+  doesn't hit HostKeyMismatch when it negotiates ED25519 against a
+  stored key of a different type.
+
+slice: "?/?"
+kind: fix
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared: []
+  actual:
+    - .github/workflows/ci.yml
+  drift: []
+
+proof:
+  tests_run: "git diff .github/workflows/ci.yml (visual review of the workflow change only)"
+  result: green
+  failing: 0
+  coverage_delta: "+0.0%"
+
+tests:
+  needed: "no"
+  rationale: >
+    CI workflow change. The only real verification is the next CI run
+    actually getting past the ssh-keyscan / kamal-deploy boundary. There
+    is no unit-testable surface. Tracked under verification.manual.
+
+verification:
+  tested:
+    - "ssh-keyscan -t rsa,ecdsa,ed25519 -T 15 -H 104.236.125.236 from my laptop returns all three key types (rsa, ecdsa, ed25519) -- run during incident triage before drafting this fix"
+  manual:
+    - "Next CI deploy run on main must reach and complete the `Kamal deploy` step without HostKeyMismatch -- pending"
+
+assumptions:
+  - "No active plan file covers this slice -- ad-hoc hotfix in the middle of an incident"
+  - "The failure mode in the logs (Net::SSH::HostKeyMismatch with a fingerprint that matches the actual live key) is caused by a key-type mismatch between what ssh-keyscan wrote and what Net::SSH negotiated, not by a stale key somewhere else on disk"
+  - "ssh-keyscan -t rsa,ecdsa,ed25519 on ubuntu-latest (OpenSSH 9.x) emits all three key types when the server offers them; verified by hand on the laptop against the same droplet after power cycle"
+  - "The droplet's sshd offers all three key types -- DigitalOcean Ubuntu 24.04 default, confirmed during incident triage"
+  - "kamal-proxy and the webfactory/ssh-agent action do not write anything to ~/.ssh/known_hosts that would shadow our step's output"
+
+specifications:
+  - "CI must pin the exact set of host key types it expects from the droplet, not inherit ssh-keyscan's default set, so a version bump in the runner image can't silently regress the deploy job"
+
+deviations_from_plan: "no active plan -- ad-hoc hotfix in the middle of a prod deploy incident"
+
+trade_offs: >
+  Minimal diff: only the ssh-keyscan invocation changes, the step stays
+  in the same position. Considered moving the step to right before the
+  `Kamal deploy` step to shrink the timing window between keyscan and
+  SSH connect, but rejected: the gap is only two file-write steps
+  (~1s of wall time) and host keys don't change on that timescale, so
+  reordering would be pure ceremony. Also considered dropping to
+  verify_host_key: never via Kamal ssh config, rejected because that
+  silently accepts MITM -- the point of the keyscan is that it DOES
+  verify. The real cost of this fix is that ssh-keyscan now explicitly
+  depends on the droplet offering all three key types; if a future
+  droplet image drops RSA or ECDSA, the scan will miss a type and the
+  step will still succeed (keyscan doesn't fail on missing types). But
+  Net::SSH only checks the key it negotiates, so as long as ED25519 is
+  present, the deploy succeeds. Accepted.
+
+self_review:
+  consistency: >
+    Keeps the single-source-of-truth smell (droplet IP duplicated between
+    ci.yml and config/deploy.yml) exactly as it was -- no new duplication
+    introduced. The existing MVP-smell comment still applies.
+  metz: "N/A -- YAML workflow change, no classes or methods."
+  enforced_in_config: >
+    The pinned key-type set and timeout live in ci.yml with an inline
+    comment block explaining WHY, not in a separate ops runbook, per the
+    enforce-constraints-in-config project rule.
+  absolutist_tradeoff_language: >
+    Commit message and comment both frame the pinning as a guarantee
+    under a specific assumption (droplet offers all three key types),
+    not as "the correct way" -- per the no-absolutist-tradeoff-language
+    project rule.
+  silent_failure_check: >
+    If ssh-keyscan misses a key type, the step still exits 0 (keyscan's
+    default behavior) and the failure only surfaces at kamal deploy
+    time. That's the same surface the original code had -- this change
+    narrows the probability of hitting it but does not close the hole.
+    A harder fix (assert all three key types landed in known_hosts)
+    would be a separate slice; captured in the trade_offs above.
+
+confidence: high
+reviewer_attention:
+  - .github/workflows/ci.yml:179-194   # the ssh-keyscan invocation and its rationale -- check the key-type hypothesis is the actual root cause before merging
