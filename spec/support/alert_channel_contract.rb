@@ -14,26 +14,16 @@ RSpec.shared_examples "an alert channel" do
       expect(channel).to respond_to(:deliver)
     end
 
-    it "accepts keyword arguments site:, event:, check_result:" do
+    it "accepts keyword arguments site:, event:, check_result:, target:" do
       params = channel.method(:deliver).parameters
       required_kwargs = params.select { |type, _| type == :keyreq }.map(&:last)
-      expect(required_kwargs).to contain_exactly(:site, :event, :check_result)
+      expect(required_kwargs).to contain_exactly(:site, :event, :check_result, :target)
     end
   end
 
-  describe "event atom set" do
-    it "accepts every event in AlertChannels::EVENTS without raising ArgumentError" do
-      AlertChannels::EVENTS.each do |event|
-        expect { allow_channel_to_accept(event) }.not_to raise_error
-      end
+  describe "error contract" do
+    it "uses AlertChannels::DeliveryError as the documented failure type" do
+      expect(AlertChannels::DeliveryError).to be < StandardError
     end
-  end
-
-  # Hook for concrete specs to customize — by default, we just assert
-  # the deliver method signature doesn't choke on a canonical event.
-  def allow_channel_to_accept(_event)
-    # Subclass specs override this when they want to actually exercise delivery.
-    # The base contract only pins the interface; behavior tests live alongside.
-    true
   end
 end

@@ -44,6 +44,14 @@ RSpec.describe DowntimeAlertMailer, type: :mailer do
         expect(mail.to).to eq([ "ops@example.com" ])
       end
     end
+
+    context "when a per-preference recipient is passed via .with(recipient:)" do
+      let(:mail) { described_class.with(site: site, recipient: "specific@example.com").site_down }
+
+      it "routes to the override address instead of ENV/default" do
+        expect(mail.to).to eq([ "specific@example.com" ])
+      end
+    end
   end
 
   describe "#site_recovered" do
