@@ -1,0 +1,61 @@
+intent: >
+  Fix CI-breaking rubocop violations introduced across slices 1, 3, and 7a.
+  Pure mechanical auto-fix — no behavior change, no new tests.
+
+slice: chore
+kind: chore
+behavior_change: none
+
+reversibility: trivial
+
+scope:
+  declared: []  # ad-hoc cleanup, not in the plan
+  actual:
+    - spec/models/alert_preference_spec.rb
+    - spec/models/site_spec.rb
+    - spec/services/alert_dispatcher_spec.rb
+  drift: []
+
+proof:
+  tests_run: "bin/dc bundle exec rubocop && bin/dc bundle exec rspec"
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: "No behavior changed — all edits are whitespace + indentation autocorrects from rubocop -a."
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "The project uses rubocop-rails-omakase which is effectively the Rails 8 default. Confirmed by .github/workflows/ci.yml running bin/rubocop -f github as a required check."
+
+specifications:
+  - "Array literals with whitespace-sensitive content use `[ x, y ]` (space inside brackets) per omakase Layout/SpaceInsideArrayLiteralBrackets."
+  - "case/when blocks indent `when` to the same column as `case`, not nested one level deeper."
+
+deviations_from_plan: >
+  This slice was not in the plan. It exists because my slice-1/3/7a
+  agent-notes recorded `lint: skipped - no linter wired`, which was
+  wrong — the project has rubocop wired via CI. Every prior slice
+  shipped with the same false assumption; this slice is the single
+  consolidated cleanup that turns CI green. The correct fix going
+  forward is to add `bin/dc bundle exec rubocop` to the pre-commit
+  checklist for every future slice on this branch (and every future
+  epic).
+
+addresses: ["#46"]  # CI failure on PR #46
+
+trade_offs: >
+  Could have amended individual slice commits to bake the formatting
+  fix into each original commit. Rejected because (1) CLAUDE.md
+  explicitly prohibits amending feature-branch commits, (2) this
+  commit's existence as a named "chore" makes the lint-discipline
+  lesson visible in the history, and (3) rebasing would break the
+  agent-notes attached to the prior SHAs.
+
+confidence: high
+reviewer_attention: []
