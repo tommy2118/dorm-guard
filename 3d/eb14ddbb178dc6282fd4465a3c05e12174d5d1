@@ -9,7 +9,13 @@ behavior_change: none
 reversibility: trivial
 
 scope:
-  declared: []  # ad-hoc cleanup, not in the plan
+  # Ad-hoc cleanup not in the Epic 6 plan — see deviations_from_plan.
+  # The three files are declared here as "what this chore deliberately
+  # touches" so the pre-merge decision record renders a complete scope.
+  declared:
+    - spec/models/alert_preference_spec.rb
+    - spec/models/site_spec.rb
+    - spec/services/alert_dispatcher_spec.rb
   actual:
     - spec/models/alert_preference_spec.rb
     - spec/models/site_spec.rb
