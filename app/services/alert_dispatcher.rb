@@ -28,7 +28,19 @@ class AlertDispatcher
     delivered_any = false
     eligible_preferences(site, event).each do |preference|
       channel_class = CHANNELS[preference.channel]
-      next if channel_class.nil?
+      if channel_class.nil?
+        # Unreachable under the current enum + CHANNELS alignment, but a
+        # future epic adding a new channel value to AlertPreference.channel
+        # without registering it here would silently drop those
+        # preferences. Log so the drift is diagnosable from the ops
+        # dashboard instead of invisible.
+        Rails.logger.warn(
+          "[AlertDispatcher] unknown channel #{preference.channel.inspect} " \
+            "for site ##{site.id} preference ##{preference.id} — " \
+            "missing CHANNELS entry? Skipping."
+        )
+        next
+      end
 
       begin
         channel_class.new.deliver(

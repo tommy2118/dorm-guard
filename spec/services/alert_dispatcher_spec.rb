@@ -222,6 +222,35 @@ RSpec.describe AlertDispatcher do
     end
   end
 
+  describe "unknown channel drift (review finding #2)" do
+    # Simulates the future case where AlertPreference.channel gains a new
+    # enum value (e.g., :sms) but AlertDispatcher::CHANNELS is not updated.
+    # Today the branch is unreachable via the enum; we force it by
+    # emptying the registry for the duration of the test.
+    before do
+      stub_const("AlertDispatcher::CHANNELS", {})
+      create_pref(channel: :email)
+    end
+
+    it "logs a warning naming the unknown channel and the preference id" do
+      expect(Rails.logger).to receive(:warn).with(/unknown channel.*email.*preference/)
+      described_class.call(site: site, from: "up", to: "down", check_result: check_result)
+    end
+
+    it "does not call any channel's deliver" do
+      allow(Rails.logger).to receive(:warn)
+      described_class.call(site: site, from: "up", to: "down", check_result: check_result)
+      expect(email_double).not_to have_received(:deliver)
+    end
+
+    it "does not record the cooldown (nothing was delivered)" do
+      allow(Rails.logger).to receive(:warn)
+      expect {
+        described_class.call(site: site, from: "up", to: "down", check_result: check_result)
+      }.not_to change { site.reload.last_alerted_events["down"] }
+    end
+  end
+
   describe "multi-channel delivery" do
     before do
       create_pref(channel: :email)
