@@ -1,0 +1,76 @@
+intent: >
+  Replace the silent-skip on an unknown channel class in AlertDispatcher
+  with a log-and-skip, so future config drift (e.g., new enum value added
+  without a matching CHANNELS registry entry) is diagnosable from ops
+  dashboards instead of invisible.
+
+slice: fix
+kind: fix
+behavior_change: additive  # only affects an unreachable branch today
+
+reversibility: trivial
+
+scope:
+  declared:
+    - app/services/alert_dispatcher.rb
+    - spec/services/alert_dispatcher_spec.rb
+  actual:
+    - app/services/alert_dispatcher.rb
+    - spec/services/alert_dispatcher_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rubocop && bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/alert_dispatcher_spec.rb  # 3 examples in a new "unknown channel drift" describe block
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "RSpec's stub_const can temporarily replace a frozen module constant for the duration of an example. Confirmed by running the spec."
+
+specifications:
+  - "When AlertDispatcher encounters a preference whose channel value doesn't map to a CHANNELS entry, it logs a warning (Rails.logger.warn) naming both the channel and the preference id, then proceeds to the next preference."
+  - "An unknown channel preference does NOT call any channel's deliver and does NOT record the cooldown (so a future retry with a fixed registry can still fire)."
+
+deviations_from_plan: >
+  Review-driven fix, not in the Epic 6 plan. Addresses both my own
+  pr-review finding and the human reviewer's finding #2. The reviewer
+  said won't-block, but shipping both fixes in one cycle costs nothing
+  and closes the drift-hiding trap before Epic 7 can hit it.
+
+addresses: ["#46 human review", "#46 pr-review pass"]
+
+trade_offs: >
+  Chose log + skip over raise. Raising would fail loud but take down
+  every other channel's delivery for the same event, violating the
+  per-channel error isolation contract from slice 7a. Log + skip
+  preserves the contract (other channels still fire) while surfacing
+  the drift to anyone reading production logs. Alternative: raise a
+  new AlertChannels::UnknownChannelError and catch it at the dispatch
+  loop's rescue block — same behavioral effect but more code for zero
+  operator-visible difference.
+
+  Chose not to record a cooldown on the unknown-channel path. If I
+  did, a fix to CHANNELS that lands later would still be blocked by
+  the recorded cooldown until it expires. By leaving the cooldown
+  untouched, a repaired dispatcher fires on the next check cycle.
+
+interfaces:
+  consumed: []  # internal-only change
+  published: []
+
+self_review:
+  consistency: "Matches the existing warn-and-continue posture in the per-channel DeliveryError rescue block directly below (line 42-44). Same log prefix, same site+preference identification."
+  metz: "The if/else expansion is 8 lines total, replacing a 1-line guard. Method call is now 32 lines (was 25). Already flagged as a Metz principle_violation in slice 7a's note; this slice adds 7 lines of straight-line logging and doesn't push the method past the legibility threshold."
+
+confidence: high
+reviewer_attention: []
