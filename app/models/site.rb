@@ -62,7 +62,13 @@ class Site < ApplicationRecord
     super(parse_expected_status_codes(value))
   end
 
+  # Form redisplay: when parsing fails, the setter stores nil in the
+  # attribute and stashes the raw bad input in an instance var. Return
+  # that raw value so the user sees their original text back (with the
+  # validation error) instead of an empty field that wiped their typing.
   def expected_status_codes_for_display
+    return @expected_status_codes_parse_error.to_s if @expected_status_codes_parse_error
+
     expected_status_codes.is_a?(Array) ? expected_status_codes.join(", ") : ""
   end
 

@@ -298,6 +298,17 @@ RSpec.describe Site, type: :model do
       site = described_class.new(valid_attrs.merge(expected_status_codes: [ 200, 301 ]))
       expect(site.expected_status_codes_for_display).to eq("200, 301")
     end
+
+    # PR #26 review finding: invalid input must survive form redisplay so
+    # the user sees their own bad input alongside the validation error,
+    # rather than a blank field that wiped what they typed.
+    it "preserves the raw invalid string for form redisplay after a parse failure" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: "200, foo, 301"))
+      site.valid? # trigger the parse-error validator
+      expect(site.expected_status_codes).to be_nil
+      expect(site.expected_status_codes_for_display).to eq("200, foo, 301")
+      expect(site.errors[:expected_status_codes]).to be_present
+    end
   end
 
   describe "follow_redirects default" do
