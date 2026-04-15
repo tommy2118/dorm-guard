@@ -1,0 +1,64 @@
+<div class="flex justify-between items-center mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">Alert preferences</h1>
+    <p class="text-sm text-base-content/70">for <span class="font-medium"><%= site.name %></span></p>
+  </div>
+  <div class="flex gap-2">
+    <%= link_to "Back to site", site_path(site), class: "btn btn-ghost btn-sm" %>
+    <%= link_to "New preference", new_site_alert_preference_path(site), class: "btn btn-primary btn-sm" %>
+  </div>
+</div>
+
+<% if empty? %>
+  <div class="card bg-base-100 border border-base-200">
+    <div class="card-body text-center text-base-content/60">
+      <p>No alert preferences configured for this site.</p>
+      <p class="text-xs">Without a preference, no alerts fire — status flips are silent.</p>
+    </div>
+  </div>
+<% else %>
+  <div class="card bg-base-100 border border-base-200">
+    <div class="overflow-x-auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Target</th>
+            <th>Events</th>
+            <th>Status</th>
+            <th class="text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% alert_preferences.each do |preference| %>
+            <tr>
+              <td>
+                <span class="badge <%= channel_badge_class(preference.channel) %>">
+                  <%= preference.channel %>
+                </span>
+              </td>
+              <td class="font-mono text-xs break-all"><%= preference.target %></td>
+              <td>
+                <% Array(preference.events).each do |event| %>
+                  <span class="badge badge-sm badge-outline"><%= event %></span>
+                <% end %>
+              </td>
+              <td>
+                <span class="badge <%= status_badge(preference) %>">
+                  <%= preference.enabled? ? "enabled" : "disabled" %>
+                </span>
+              </td>
+              <td class="text-right">
+                <%= link_to "Edit", edit_site_alert_preference_path(site, preference), class: "btn btn-ghost btn-xs" %>
+                <%= button_to "Delete", site_alert_preference_path(site, preference),
+                      method: :delete,
+                      data: { turbo_confirm: "Delete this alert preference?" },
+                      class: "btn btn-ghost btn-xs text-error" %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% end %>

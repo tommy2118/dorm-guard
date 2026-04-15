@@ -1,0 +1,66 @@
+<h1 class="text-2xl font-semibold mb-6"><%= heading %></h1>
+<p class="text-sm text-base-content/70 mb-4">
+  for <span class="font-medium"><%= site.name %></span>
+</p>
+
+<%= form_with(model: [ site, alert_preference ], local: true, class: "card bg-base-100 shadow-sm border border-base-200") do |f| %>
+  <div class="card-body space-y-4">
+    <div class="form-control">
+      <%= f.label :channel, class: "label label-text font-medium" %>
+      <%= f.select :channel,
+            channel_options,
+            { selected: selected_channel },
+            class: "select select-bordered w-full#{' select-error' if field_error(:channel)}" %>
+      <% if (msg = field_error(:channel)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="form-control">
+      <%= f.label :target, target_label_for(selected_channel), class: "label label-text font-medium" %>
+      <%= f.text_field :target,
+            class: "input input-bordered w-full#{' input-error' if field_error(:target)}",
+            placeholder: selected_channel == "email" ? "ops@example.com" : "https://..." %>
+      <p class="mt-1 text-xs text-base-content/70">
+        For Slack and generic webhooks, the target must be an https URL. For email, a valid address the team actually reads.
+      </p>
+      <% if (msg = field_error(:target)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="form-control">
+      <span class="label label-text font-medium">Events</span>
+      <div class="flex flex-col gap-2 mt-1">
+        <% event_options.each do |event| %>
+          <label class="label cursor-pointer justify-start gap-3">
+            <%= check_box_tag "alert_preference[events][]", event, checked_events.include?(event), class: "checkbox checkbox-sm" %>
+            <span class="label-text capitalize"><%= event %></span>
+          </label>
+        <% end %>
+      </div>
+      <%= hidden_field_tag "alert_preference[events][]", "" %>
+      <p class="mt-1 text-xs text-base-content/70">
+        Pick which transitions this preference fires on. <code>down</code> events are always delivered even during quiet hours.
+      </p>
+      <% if (msg = field_error(:events)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="form-control">
+      <label class="label cursor-pointer justify-start gap-3">
+        <%= f.check_box :enabled, class: "checkbox" %>
+        <span class="label-text">Enabled</span>
+      </label>
+      <p class="mt-1 text-xs text-base-content/70">
+        Disable to silence this preference without deleting it. Useful for on-call rotation.
+      </p>
+    </div>
+
+    <div class="card-actions justify-end">
+      <%= link_to "Cancel", site_alert_preferences_path(site), class: "btn btn-ghost" %>
+      <%= f.submit submit_label, class: "btn btn-primary" %>
+    </div>
+  </div>
+<% end %>
