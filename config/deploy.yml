@@ -5,6 +5,22 @@ service: dorm_guard
 # `image` is just the short name; the registry.server value prefixes it.
 image: dorm_guard
 
+# How long Kamal waits for a new container's /up to go healthy before
+# rolling back. Default is 30s, which is not enough for this app on the
+# current 1vCPU/1GB droplet: cold Rails 8.1 boot (eager load + YJIT
+# warmup + Solid Queue in-Puma supervisor start) observed at ~60s before
+# Puma even begins listening. At 30s the proxy gives up, Kamal stops the
+# new container, and the deploy fails with
+#   "target failed to become healthy within configured timeout".
+# Bumped to 120s to give cold boot room plus headroom for the first /up
+# to actually complete. This is an accepted trade-off: failed deploys now
+# take ~2 minutes to surface instead of 30s, in exchange for deploys that
+# succeed at all on this droplet size. The real fix is to reduce cold
+# boot time — tracked as #27. This value is the floor we need until that
+# work lands. Revisit if/when the droplet is resized or cold-boot time
+# is driven down.
+deploy_timeout: 120
+
 # Deploy to these servers.
 #
 # Public IPv4 of the `dorm-guard` droplet in nyc3 (s-1vcpu-1gb,
