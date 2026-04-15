@@ -19,6 +19,21 @@ class Site < ApplicationRecord
   serialize :expected_status_codes, coder: JSON
   serialize :last_alerted_events, coder: JSON, type: Hash
 
+  # Canonicalize quiet_hours_timezone to its IANA identifier on assignment
+  # so the DB, form options, specs, and seeds all speak the same dialect.
+  # Accepts any input ActiveSupport::TimeZone recognizes (IANA identifier,
+  # Rails friendly name, or nil) and always stores the IANA form — that's
+  # what SiteFormComponent#timezone_options emits, so the edit form's
+  # <select> always finds the persisted value and marks it selected.
+  # Invalid inputs pass through unchanged so validate_quiet_hours_timezone
+  # can reject them with a proper error.
+  normalizes :quiet_hours_timezone, with: ->(value) do
+    return nil if value.blank?
+
+    zone = ActiveSupport::TimeZone[value.to_s.strip]
+    zone ? zone.tzinfo.name : value
+  end
+
   has_many :check_results, dependent: :destroy
   has_many :alert_preferences, dependent: :destroy
 

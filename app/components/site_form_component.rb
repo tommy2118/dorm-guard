@@ -30,7 +30,12 @@ class SiteFormComponent < ApplicationComponent
     CHECK_TYPE_LABELS.map { |value, label| [ label, value ] }
   end
 
+  # Emit the IANA identifier (e.g., "America/New_York") as the option VALUE,
+  # matching what Site#normalizes persists. Keep Rails' formatted label
+  # ("(GMT-05:00) Eastern Time (US & Canada)") as the display. Without this
+  # alignment, a site persisted with "America/New_York" would render the
+  # select with no matching option and a silent save would wipe the tz.
   def timezone_options
-    ActiveSupport::TimeZone.all.map { |tz| [ tz.to_s, tz.name ] }
+    ActiveSupport::TimeZone.all.map { |tz| [ tz.to_s, tz.tzinfo.name ] }
   end
 end

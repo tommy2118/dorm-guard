@@ -173,11 +173,13 @@ RSpec.describe SiteFormComponent, type: :component do
       expect(page).to have_css("input[name='site[quiet_hours_end]'][type='time']")
     end
 
-    it "renders the quiet_hours_timezone select populated with named zones" do
+    it "renders the quiet_hours_timezone select with IANA identifiers as option values" do
       expect(page).to have_css("select[name='site[quiet_hours_timezone]'].select.select-bordered")
-      # ActiveSupport::TimeZone.all exposes friendly Rails names (mapped), not raw IANA identifiers.
-      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='Eastern Time (US & Canada)']")
-      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='UTC']")
+      # Option VALUES are IANA identifiers so the <select> matches what
+      # Site#normalizes persists. Labels remain human-readable Rails
+      # formatted strings (e.g., "(GMT-05:00) Eastern Time (US & Canada)").
+      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='America/New_York']")
+      expect(page).to have_css("select[name='site[quiet_hours_timezone]'] option[value='Etc/UTC']")
     end
 
     it "offers a blank option that falls back to the Rails default time zone" do
@@ -186,6 +188,49 @@ RSpec.describe SiteFormComponent, type: :component do
 
     it "describes the critical override in help text" do
       expect(page).to have_text(/down.*still fire/)
+    end
+  end
+
+  describe "quiet_hours_timezone pre-selection round-trip (review finding #1)" do
+    it "pre-selects the persisted IANA timezone on an existing site's edit form" do
+      persisted_site = Site.create!(
+        name: "NYC API",
+        url: "https://example.com",
+        interval_seconds: 60,
+        quiet_hours_start: "22:00",
+        quiet_hours_end: "06:00",
+        quiet_hours_timezone: "America/New_York"
+      )
+
+      with_request_url "/sites/#{persisted_site.id}/edit" do
+        render_inline(described_class.new(site: persisted_site))
+      end
+
+      # The select must actually have an <option> whose value matches the
+      # persisted tz. Without this, the form would render no option as
+      # selected, and a save would silently wipe the timezone.
+      expect(page).to have_css(
+        "select[name='site[quiet_hours_timezone]'] option[value='America/New_York'][selected]"
+      )
+    end
+
+    it "pre-selects even when the site was persisted from a Rails friendly name input (normalized to IANA)" do
+      persisted_site = Site.create!(
+        name: "Also NYC",
+        url: "https://example.com",
+        interval_seconds: 60,
+        quiet_hours_start: "22:00",
+        quiet_hours_end: "06:00",
+        quiet_hours_timezone: "Eastern Time (US & Canada)"
+      )
+
+      with_request_url "/sites/#{persisted_site.id}/edit" do
+        render_inline(described_class.new(site: persisted_site))
+      end
+
+      expect(page).to have_css(
+        "select[name='site[quiet_hours_timezone]'] option[value='America/New_York'][selected]"
+      )
     end
   end
 

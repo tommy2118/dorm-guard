@@ -594,6 +594,52 @@ RSpec.describe Site, type: :model do
       end
     end
 
+    describe "quiet_hours_timezone canonicalization (review finding #1)" do
+      it "leaves an IANA identifier unchanged on assignment" do
+        site = described_class.new(valid_attrs.merge(quiet_hours_timezone: "America/New_York"))
+        expect(site.quiet_hours_timezone).to eq("America/New_York")
+      end
+
+      it "converts a Rails friendly name to its IANA identifier on assignment" do
+        site = described_class.new(valid_attrs.merge(quiet_hours_timezone: "Eastern Time (US & Canada)"))
+        expect(site.quiet_hours_timezone).to eq("America/New_York")
+      end
+
+      it "converts 'UTC' to 'Etc/UTC' on assignment" do
+        site = described_class.new(valid_attrs.merge(quiet_hours_timezone: "UTC"))
+        expect(site.quiet_hours_timezone).to eq("Etc/UTC")
+      end
+
+      it "strips surrounding whitespace before lookup" do
+        site = described_class.new(valid_attrs.merge(quiet_hours_timezone: "  America/New_York  "))
+        expect(site.quiet_hours_timezone).to eq("America/New_York")
+      end
+
+      it "passes invalid timezone names through unchanged so the validator rejects them" do
+        site = described_class.new(valid_attrs.merge(
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "Middle-earth/Shire"
+        ))
+        expect(site.quiet_hours_timezone).to eq("Middle-earth/Shire")
+        expect(site).not_to be_valid
+      end
+
+      it "treats blank values as nil" do
+        site = described_class.new(valid_attrs.merge(quiet_hours_timezone: ""))
+        expect(site.quiet_hours_timezone).to be_nil
+      end
+
+      it "persists the normalized IANA identifier across a save round-trip" do
+        site = described_class.create!(valid_attrs.merge(
+          quiet_hours_start: "09:00",
+          quiet_hours_end: "17:00",
+          quiet_hours_timezone: "Eastern Time (US & Canada)"
+        ))
+        expect(site.reload.quiet_hours_timezone).to eq("America/New_York")
+      end
+    end
+
     describe "#in_quiet_hours?" do
       it "returns false when no window is configured" do
         site = described_class.new(valid_attrs)
