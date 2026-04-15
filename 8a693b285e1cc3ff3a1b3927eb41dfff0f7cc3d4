@@ -1,0 +1,146 @@
+intent: >
+  Append :degraded to Site.status at integer 4 and thread it through every
+  status-aware code path (badge component, alert guard, predicates) without
+  yet emitting it — Slice 10 will wire HTTP and SSL emission paths.
+
+slice: 9/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - db/migrate/20260415001502_add_degraded_to_site_status.rb
+    - app/models/site.rb
+    - app/components/status_badge_component.rb
+    - app/jobs/perform_check_job.rb
+    - spec/models/site_spec.rb
+    - spec/components/status_badge_component_spec.rb
+    - spec/components/previews/status_badge_component_preview.rb
+    - spec/jobs/perform_check_job_spec.rb
+  actual:
+    - db/migrate/20260415001502_add_degraded_to_site_status.rb
+    - app/models/site.rb
+    - app/components/status_badge_component.rb
+    - app/jobs/perform_check_job.rb
+    - spec/models/site_spec.rb
+    - spec/components/status_badge_component_spec.rb
+    - spec/components/previews/status_badge_component_preview.rb
+    - spec/jobs/perform_check_job_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb
+    - spec/components/status_badge_component_spec.rb
+    - spec/components/previews/status_badge_component_preview.rb
+    - spec/jobs/perform_check_job_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "Rails 8 integer-backed enums allow appending a new key at a non-contiguous integer (integer 3 is skipped between :down=2 and :degraded=4)"
+  - "No production data exists with status=4 yet (all rows are pre-Slice-9 http/ssl/tcp/dns/content_match with status at 0/1/2)"
+  - "DaisyUI 'badge-warning' class is present in the vendored stylesheet and renders as a yellow pill matching the up/down badges' visual weight"
+
+specifications:
+  - "Site.status is a 4-state enum: unknown=0, up=1, down=2, degraded=4. Integer 3 is intentionally left unused — do not renumber existing values."
+  - "Site#degraded? is true when status is :degraded; false for all other statuses"
+  - "Site#healthy? := up? (unchanged from Slice 2). :degraded is explicitly NOT healthy."
+  - "Site#failing? := down? (unchanged from Slice 2). :degraded is explicitly NOT failing."
+  - "Site#read_attribute_before_type_cast(:status) returns 4 for :degraded rows — pinned by spec so a future enum refactor can't silently swap the integer"
+  - "StatusBadgeComponent renders :degraded with class 'badge badge-warning'"
+  - "PerformCheckJob#notify_if_newly_down uses site.failing? instead of site.down? — no behavior change yet (failing? aliases down?) but Slice 10's :degraded emission paths will route through failing? correctly from the first commit"
+  - "No PerformCheckJob code path emits :degraded in this slice; the transition test force-stubs derive_status to simulate what Slice 10 will do"
+
+deviations_from_plan: none
+
+trade_offs: >
+  Kept failing? as an alias for down? even in Slice 9 rather than changing
+  the definition to include :degraded. Cost: :degraded transitions still
+  don't trigger alerts. Benefit: matches decision 3's rule that :degraded
+  is neither healthy nor failing — it's a warning state that Epic 6 will
+  wire its own alerting for. If failing? were redefined to include
+  :degraded, every degraded site would spam downtime emails, which is
+  the opposite of the intent.
+
+  The Slice 9 job spec that exercises the :degraded transition uses
+  allow_any_instance_of(PerformCheckJob).to receive(:derive_status).and_return(:degraded).
+  That's mocking a private method on the class under test — a code smell
+  normally, but necessary here because no checker emits :degraded until
+  Slice 10 and the guard behavior needs to be pinned in isolation before
+  the emission paths land. Slice 10 replaces this stubbing with a real
+  HTTP slow-response outcome and SSL cert-expiring outcome.
+
+  Documentation-only migration (empty `change` method) preserves the
+  audit trail in schema_migrations without touching the sqlite schema.
+  Cost: a schema_migrations row that looks weird in db:migrate:status.
+  Benefit: future developers grepping for "when did :degraded land" find
+  a migration file dated correctly rather than having to git blame the
+  model.
+
+interfaces:
+  consumed:
+    - "Site#status -> String"
+    - "PerformCheckJob#derive_status(site, result) -> Symbol (private)"
+  published:
+    - "Site#degraded? -> Boolean"
+    - "Site::statuses -> Hash (now includes 'degraded' => 4)"
+    - "StatusBadgeComponent.CLASSES_BY_STATUS -> Hash (now includes :degraded)"
+
+self_review:
+  tests: >
+    Added 4 cases to site_spec.rb: :degraded in the enum support block,
+    read_attribute_before_type_cast integer pinning, :degraded predicate
+    truthy + healthy?/failing? both false, and updated the unknown-predicate
+    context name. Added 1 case to status_badge_component_spec.rb for
+    badge-warning rendering. Added 1 preview variant for :degraded. Added
+    1 context to perform_check_job_spec.rb asserting degraded transitions
+    do NOT enqueue the downtime mailer — the spec stubs derive_status
+    directly since no checker yet emits :degraded, which Slice 10 fixes.
+  consistency: >
+    The enum declaration keeps its one-line form; the integer assignment
+    comment above the declaration is the only source-level annotation.
+    notify_if_newly_down uses failing? matching the predicate-discipline
+    rule from decision 3 (Slice 2 scaffolded failing? for exactly this
+    moment). StatusBadgeComponent's CLASSES_BY_STATUS hash keeps its
+    ordered structure (up, down, degraded, unknown) matching the severity
+    ordering.
+  metz: >
+    Measured. site.rb 118 lines, 15 methods — still over the 100-line
+    Metz limit established in Slice 8, still deferred to a post-epic
+    chore. status_badge_component.rb 21 lines, 3 methods, all under 5
+    body lines. perform_check_job.rb 53 lines, 9 methods — notify_if_newly_down
+    is 4 body lines (unchanged shape, one method call swap).
+  error_paths: >
+    The :degraded transition is tested to NOT enqueue an email — that's
+    the error path we care about (silent degraded transitions are
+    intentional, Epic 6's responsibility).
+  security: >
+    No new security surface. The enum value addition does not change
+    authorization, strong params, or input validation.
+  api: >
+    Additive. Site#degraded? is new (via enum). StatusBadgeComponent gains
+    a hash entry. No existing call site breaks — any code that branched
+    on up?/down? continues to work because the new value is covered by
+    explicit fallbacks (badge-ghost for unknown), new predicates, and
+    the failing?/healthy? refactor in notify_if_newly_down.
+  dead_code: >
+    None. The audit-trail migration is intentionally empty; a comment
+    explains why so a future reader doesn't "clean it up."
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb:12"  # enum integer assignment — :degraded MUST stay at 4, not 3
+  - "app/jobs/perform_check_job.rb:56-60"  # notify_if_newly_down failing? swap — subtle predicate change
+  - "spec/jobs/perform_check_job_spec.rb"  # the allow_any_instance_of stubbing dance for the :degraded transition
