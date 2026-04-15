@@ -6,7 +6,7 @@ class PerformCheckJob < ApplicationJob
     previous_status = site.status
     result = CheckDispatcher.call(site)
     apply_result(site, result)
-    notify_if_newly_down(site, previous_status)
+    AlertDispatcher.call(site: site, from: previous_status, to: site.status, check_result: latest_check_result(site))
   end
 
   private
@@ -29,8 +29,12 @@ class PerformCheckJob < ApplicationJob
   end
 
   def update_site(site, result)
+    derived = derive_status(site, result)
+    proposed = site.propose_status(derived)
     site.update!(
-      status: derive_status(site, result),
+      status: proposed,
+      candidate_status: site.candidate_status,
+      candidate_status_at: site.candidate_status_at,
       last_checked_at: result.checked_at
     )
   end
@@ -79,10 +83,11 @@ class PerformCheckJob < ApplicationJob
     result.response_time_ms > site.slow_threshold_ms
   end
 
-  def notify_if_newly_down(site, previous_status)
-    return unless site.failing?
-    return if previous_status == "down"
-
-    DowntimeAlertMailer.with(site: site).site_down.deliver_later
+  # Fetch the row PerformCheckJob just inserted. The dispatcher needs a
+  # persisted CheckResult to serialize into the webhook payload; reading
+  # from the database (rather than constructing from the CheckOutcome)
+  # keeps the payload contract aligned with what the UI shows.
+  def latest_check_result(site)
+    site.check_results.order(checked_at: :desc).first
   end
 end

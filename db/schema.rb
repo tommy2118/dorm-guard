@@ -10,7 +10,18 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_15_001849) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_15_120003) do
+  create_table "alert_preferences", force: :cascade do |t|
+    t.integer "channel", null: false
+    t.datetime "created_at", null: false
+    t.boolean "enabled", default: true, null: false
+    t.text "events", null: false
+    t.integer "site_id", null: false
+    t.string "target", null: false
+    t.datetime "updated_at", null: false
+    t.index ["site_id"], name: "index_alert_preferences_on_site_id"
+  end
+
   create_table "check_results", force: :cascade do |t|
     t.datetime "checked_at", null: false
     t.datetime "created_at", null: false
@@ -33,15 +44,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_15_001849) do
   end
 
   create_table "sites", force: :cascade do |t|
+    t.integer "candidate_status"
+    t.datetime "candidate_status_at"
     t.integer "check_type", default: 0, null: false
     t.string "content_match_pattern"
+    t.integer "cooldown_minutes", default: 5, null: false
     t.datetime "created_at", null: false
     t.string "dns_hostname"
     t.text "expected_status_codes"
     t.boolean "follow_redirects", default: true, null: false
     t.integer "interval_seconds", null: false
+    t.text "last_alerted_events"
     t.datetime "last_checked_at"
     t.string "name", null: false
+    t.time "quiet_hours_end"
+    t.time "quiet_hours_start"
+    t.string "quiet_hours_timezone"
     t.integer "slow_threshold_ms"
     t.integer "status", default: 0, null: false
     t.integer "tcp_port"
@@ -58,6 +76,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_15_001849) do
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 
+  add_foreign_key "alert_preferences", "sites"
   add_foreign_key "check_results", "sites"
   add_foreign_key "sessions", "users"
 end

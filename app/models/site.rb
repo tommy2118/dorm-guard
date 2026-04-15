@@ -11,11 +11,31 @@ class Site < ApplicationRecord
   # Integer 3 is intentionally skipped. :degraded is appended at 4 so
   # :down stays at 2 and existing stored values never need to renumber.
   enum :status, { unknown: 0, up: 1, down: 2, degraded: 4 }, default: :unknown
+  # candidate_status reuses the same integer mapping as status; the :candidate_ prefix
+  # avoids the predicate collision that Rails' enum would generate on raw aliasing.
+  enum :candidate_status, { unknown: 0, up: 1, down: 2, degraded: 4 }, prefix: :candidate, allow_nil: true
   enum :check_type, { http: 0, ssl: 1, tcp: 2, dns: 3, content_match: 4 }, default: :http
 
   serialize :expected_status_codes, coder: JSON
+  serialize :last_alerted_events, coder: JSON, type: Hash
+
+  # Canonicalize quiet_hours_timezone to its IANA identifier on assignment
+  # so the DB, form options, specs, and seeds all speak the same dialect.
+  # Accepts any input ActiveSupport::TimeZone recognizes (IANA identifier,
+  # Rails friendly name, or nil) and always stores the IANA form — that's
+  # what SiteFormComponent#timezone_options emits, so the edit form's
+  # <select> always finds the persisted value and marks it selected.
+  # Invalid inputs pass through unchanged so validate_quiet_hours_timezone
+  # can reject them with a proper error.
+  normalizes :quiet_hours_timezone, with: ->(value) do
+    return nil if value.blank?
+
+    zone = ActiveSupport::TimeZone[value.to_s.strip]
+    zone ? zone.tzinfo.name : value
+  end
 
   has_many :check_results, dependent: :destroy
+  has_many :alert_preferences, dependent: :destroy
 
   before_validation :clear_irrelevant_config
 
@@ -50,8 +70,13 @@ class Site < ApplicationRecord
   validates :slow_threshold_ms,
             numericality: { only_integer: true, in: SLOW_THRESHOLD_RANGE },
             allow_nil: true
+  validates :cooldown_minutes,
+            presence: true,
+            numericality: { only_integer: true, greater_than_or_equal_to: 0 }
 
   validate :validate_expected_status_codes
+  validate :validate_quiet_hours_pair
+  validate :validate_quiet_hours_timezone
 
   # Accepts either an array (round-tripped from the DB) or a string typed
   # into the form (e.g., "200, 301"). Parses strings into an integer array;
@@ -84,7 +109,93 @@ class Site < ApplicationRecord
     down?
   end
 
+  def alert_cooldown_expired?(event, now = Time.current)
+    events_hash = last_alerted_events || {}
+    last = events_hash[event.to_s]
+    return true if last.blank?
+
+    parsed = Time.zone.parse(last.to_s)
+    return true if parsed.nil?
+
+    parsed + cooldown_minutes.minutes <= now
+  end
+
+  def record_alert_sent!(event, now = Time.current)
+    merged = (last_alerted_events || {}).merge(event.to_s => now.iso8601)
+    update!(last_alerted_events: merged)
+  end
+
+  # N=2 consecutive-check debounce. Mutates self in memory only; the caller
+  # (PerformCheckJob#update_site) owns persistence and decides which attributes
+  # to save. Does not touch updated_at (no save here). Returns the proposed
+  # effective status as a string so the caller can diff against the
+  # pre-proposal value.
+  #
+  # Rules (new_status is the status derived from the latest check):
+  #   - new_status matches the confirmed status → clear candidate, no change
+  #   - new_status matches the pending candidate → commit the new status
+  #   - new_status differs from both → pending candidate is replaced
+  def propose_status(new_status, now = Time.current)
+    new_status_str = new_status.to_s
+
+    if new_status_str == status
+      self.candidate_status = nil
+      self.candidate_status_at = nil
+    elsif new_status_str == candidate_status
+      self.status = new_status_str
+      self.candidate_status = nil
+      self.candidate_status_at = nil
+    else
+      self.candidate_status = new_status_str
+      self.candidate_status_at = now
+    end
+
+    status
+  end
+
+  def in_quiet_hours?(now = Time.current)
+    return false if quiet_hours_start.blank? || quiet_hours_end.blank?
+
+    zone = resolved_quiet_hours_zone
+    local_now = now.in_time_zone(zone)
+    current_seconds = local_now.seconds_since_midnight.to_i
+    start_seconds = seconds_since_midnight(quiet_hours_start)
+    end_seconds = seconds_since_midnight(quiet_hours_end)
+
+    if start_seconds <= end_seconds
+      current_seconds >= start_seconds && current_seconds < end_seconds
+    else
+      current_seconds >= start_seconds || current_seconds < end_seconds
+    end
+  end
+
   private
+
+  def resolved_quiet_hours_zone
+    name = quiet_hours_timezone.presence || Rails.application.config.time_zone
+    ActiveSupport::TimeZone[name] || ActiveSupport::TimeZone["UTC"]
+  end
+
+  def seconds_since_midnight(time_value)
+    return 0 if time_value.nil?
+
+    time_value.hour * 3600 + time_value.min * 60 + time_value.sec
+  end
+
+  def validate_quiet_hours_pair
+    return if quiet_hours_start.nil? && quiet_hours_end.nil?
+    return if quiet_hours_start.present? && quiet_hours_end.present?
+
+    errors.add(:quiet_hours_end, "must be set together with quiet_hours_start")
+  end
+
+  def validate_quiet_hours_timezone
+    return if quiet_hours_timezone.blank?
+    return if ActiveSupport::TimeZone[quiet_hours_timezone]
+
+    errors.add(:quiet_hours_timezone, "is not a recognized ActiveSupport::TimeZone name")
+  end
+
 
   def parse_expected_status_codes(value)
     return nil if value.nil?

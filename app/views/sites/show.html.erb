@@ -2,6 +2,10 @@
 
 <%= render(SiteDetailComponent.new(site: @site)) %>
 
+<div class="mt-6 flex gap-2">
+  <%= link_to "Alert preferences", site_alert_preferences_path(@site), class: "btn btn-sm btn-outline" %>
+</div>
+
 <section class="mt-8">
   <h3 class="text-xl font-semibold mb-4">Check history</h3>
   <%= render(CheckHistoryTableComponent.new(results: @check_results)) %>

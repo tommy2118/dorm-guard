@@ -190,6 +190,41 @@ RSpec.describe "Sites", type: :request do
       expect(response).to have_http_status(:unprocessable_content)
       expect(response.body).to include("can&#39;t be blank").or include("is invalid")
     end
+
+    it "persists the noise-control fields when provided" do
+      post sites_path, params: {
+        site: valid_params[:site].merge(
+          cooldown_minutes: 15,
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "America/New_York"
+        )
+      }
+      expect(response).to redirect_to(sites_path)
+      site = Site.last
+      expect(site.cooldown_minutes).to eq(15)
+      expect(site.quiet_hours_start.strftime("%H:%M")).to eq("22:00")
+      expect(site.quiet_hours_end.strftime("%H:%M")).to eq("06:00")
+      expect(site.quiet_hours_timezone).to eq("America/New_York")
+    end
+
+    it "preserves an already-set timezone when both quiet_hours fields are blanked on update" do
+      post sites_path, params: {
+        site: valid_params[:site].merge(
+          quiet_hours_start: "22:00",
+          quiet_hours_end: "06:00",
+          quiet_hours_timezone: "America/New_York"
+        )
+      }
+      site = Site.last
+      patch site_path(site), params: {
+        site: { quiet_hours_start: "", quiet_hours_end: "" }
+      }
+      expect(response).to redirect_to(sites_path)
+      expect(site.reload.quiet_hours_start).to be_nil
+      expect(site.reload.quiet_hours_end).to be_nil
+      expect(site.reload.quiet_hours_timezone).to eq("America/New_York")
+    end
   end
 
   describe "GET /sites/:id/edit" do

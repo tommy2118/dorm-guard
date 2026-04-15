@@ -43,6 +43,53 @@
       <% end %>
     </div>
 
+    <div class="divider text-sm text-base-content/60">Alert noise controls</div>
+
+    <div class="form-control">
+      <%= f.label :cooldown_minutes, "Cooldown (minutes)", class: "label label-text font-medium" %>
+      <%= f.number_field :cooldown_minutes,
+            min: 0,
+            class: "input input-bordered w-full#{' input-error' if field_error(:cooldown_minutes)}" %>
+      <p class="mt-1 text-xs text-base-content/70">
+        Minimum minutes between alerts for the same event type. Applied per-event (down / up / degraded).
+      </p>
+      <% if (msg = field_error(:cooldown_minutes)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="form-control">
+        <%= f.label :quiet_hours_start, "Quiet hours start", class: "label label-text font-medium" %>
+        <%= f.time_field :quiet_hours_start,
+              class: "input input-bordered w-full#{' input-error' if field_error(:quiet_hours_start)}" %>
+      </div>
+
+      <div class="form-control">
+        <%= f.label :quiet_hours_end, "Quiet hours end", class: "label label-text font-medium" %>
+        <%= f.time_field :quiet_hours_end,
+              class: "input input-bordered w-full#{' input-error' if field_error(:quiet_hours_end)}" %>
+      </div>
+    </div>
+
+    <% if (msg = field_error(:quiet_hours_end)) %>
+      <p class="mt-1 text-sm text-error"><%= msg %></p>
+    <% end %>
+
+    <div class="form-control">
+      <%= f.label :quiet_hours_timezone, "Quiet hours timezone", class: "label label-text font-medium" %>
+      <%= f.select :quiet_hours_timezone,
+            timezone_options,
+            { include_blank: "(default Rails time zone)" },
+            class: "select select-bordered w-full#{' select-error' if field_error(:quiet_hours_timezone)}" %>
+      <p class="mt-1 text-xs text-base-content/70">
+        During this window, <code>down</code> alerts still fire but <code>up</code> and <code>degraded</code> alerts are silently dropped (not deferred).
+      </p>
+      <% if (msg = field_error(:quiet_hours_timezone)) %>
+        <p class="mt-1 text-sm text-error"><%= msg %></p>
+      <% end %>
+    </div>
+
     <div class="card-actions justify-end">
       <%= link_to "Cancel", sites_path, class: "btn btn-ghost" %>
       <%= f.submit submit_label, class: "btn btn-primary" %>

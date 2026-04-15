@@ -52,7 +52,9 @@ Production is deployed with Kamal to `dorm-guard.com`. The operator keeps a loca
 | `RAILS_MASTER_KEY`        | yes      | (from `config/master.key`)               | Rails credentials / message verifier                                          |
 | `DORM_GUARD_HOST`         | no       | `dorm-guard.com`                         | `config.hosts`, mailer URL options, Kamal proxy host                          |
 | `DORM_GUARD_MAIL_FROM`    | no       | `dorm-guard@dorm-guard.com`              | `ApplicationMailer.default[:from]`                                            |
-| `DORM_GUARD_ALERT_TO`     | no       | `alerts@dorm-guard.local`                | `DowntimeAlertMailer` recipient                                               |
+| `DORM_GUARD_ALERT_TO`     | no       | `alerts@dorm-guard.local`                | `DowntimeAlertMailer` ENV fallback (per-preference target wins when set)      |
+| `DORM_GUARD_SLACK_WEBHOOK_URL`   | no | `https://example.com/slack-webhook-placeholder` | Dev seed placeholder for the Slack alert channel; override to test real delivery |
+| `DORM_GUARD_GENERIC_WEBHOOK_URL` | no | `https://example.com/webhook-placeholder`       | Dev seed placeholder for the generic webhook channel; override to test real delivery |
 | `SMTP_ADDRESS`            | no       | `email-smtp.us-east-1.amazonaws.com`     | `action_mailer.smtp_settings[:address]` (Amazon SES us-east-1 by default)     |
 | `SMTP_PORT`               | no       | `587`                                    | `action_mailer.smtp_settings[:port]`                                          |
 | `SMTP_USER_NAME`          | **yes**  | — (fail-fast)                            | `action_mailer.smtp_settings[:user_name]` — container refuses boot if missing |
@@ -68,3 +70,22 @@ The SMTP vars are provider-neutral on purpose — swapping from SES to Resend / 
 ### Zero-auth deploy window (Epic 3 → Epic 4)
 
 Epic 3 ships the production deploy without authentication as a deliberate stepping stone to Epic 4. Until auth lands, `/sites` CRUD is technically reachable by anyone who finds the URL. `public/robots.txt` is a `User-agent: *` / `Disallow: /` to discourage crawler indexing during this window. Operators who care about leakage should keep the URL private (or front it with a VPN / IP allowlist on the droplet) until Epic 4 merges.
+
+## Alerting (Epic 6)
+
+`dorm-guard` routes alerts through per-site `AlertPreference` records. Each preference has a `channel` (`:email`, `:slack`, `:webhook`), a `target` (an email address or an `https://` URL), and an `events` array picking which transitions it fires on (`down`, `up`, `degraded`).
+
+- **Email** — enqueues `DowntimeAlertMailer.site_{down,recovered,degraded}` to the preference's target. Falls back to `ENV["DORM_GUARD_ALERT_TO"]` if no per-preference recipient is set.
+- **Slack** — POSTs a JSON payload (`text` + `blocks`) to a Slack incoming webhook. See the locked contract in `app/services/alert_channels/slack.rb`.
+- **Generic webhook** — POSTs a documented JSON payload to any `https://` URL. Schema version lives in `AlertChannels::Webhook::PAYLOAD_SCHEMA_VERSION`; see `app/services/alert_channels/webhook.rb` for the exact shape.
+
+All three channels run through the existing `SsrfGuard` middleware with 5s / 10s timeouts, so a user cannot accidentally point a webhook at a private-range IP.
+
+The dispatcher (`app/services/alert_dispatcher.rb`) applies two noise controls before delivery:
+
+1. **Per-event cooldown** — `Site#cooldown_minutes` (default 5) gates alerts of the same event type. A recent `:down` alert does **not** suppress a new `:up` alert.
+2. **Quiet hours** — `Site#quiet_hours_start/end/timezone` silence `:up` and `:degraded` alerts during the window. `:down` is a critical override and always fires. Suppressed events are **dropped, not deferred** — there is no replay when the window ends.
+
+A light N=2 debounce on `Site#propose_status` (`app/models/site.rb`) requires two consecutive same-status checks before the UI commits a status change — single-check blips are ignored.
+
+Dev setup: `bin/dc bin/rails db:seed` creates a quiet-hours demo site and wires three channel preferences (email/slack/webhook) onto each demo site. Override the webhook targets with `DORM_GUARD_SLACK_WEBHOOK_URL` / `DORM_GUARD_GENERIC_WEBHOOK_URL` to test real delivery end-to-end.
