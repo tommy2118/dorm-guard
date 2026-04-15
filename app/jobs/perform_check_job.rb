@@ -48,7 +48,7 @@ class PerformCheckJob < ApplicationJob
   end
 
   def notify_if_newly_down(site, previous_status)
-    return unless site.down?
+    return unless site.failing?
     return if previous_status == "down"
 
     DowntimeAlertMailer.with(site: site).site_down.deliver_later

@@ -68,7 +68,7 @@ RSpec.describe Site, type: :model do
       expect(described_class.new(valid_attrs).status).to eq("unknown")
     end
 
-    it "supports up and down transitions via the enum" do
+    it "supports up, down, and degraded transitions via the enum" do
       site = described_class.new(valid_attrs)
 
       site.status = :up
@@ -76,6 +76,14 @@ RSpec.describe Site, type: :model do
 
       site.status = :down
       expect(site).to be_down
+
+      site.status = :degraded
+      expect(site).to be_degraded
+    end
+
+    it "persists :degraded at integer 4 so :down stays at 2" do
+      site = described_class.create!(valid_attrs.merge(status: :degraded))
+      expect(site.read_attribute_before_type_cast(:status)).to eq(4)
     end
   end
 
@@ -137,6 +145,13 @@ RSpec.describe Site, type: :model do
       site.status = :down
       expect(site).to be_failing
       expect(site).not_to be_healthy
+    end
+
+    it "is neither healthy nor failing when degraded (it's a warning state)" do
+      site.status = :degraded
+      expect(site).not_to be_healthy
+      expect(site).not_to be_failing
+      expect(site).to be_degraded
     end
 
     it "is neither healthy nor failing when unknown" do

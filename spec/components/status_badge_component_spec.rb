@@ -11,6 +11,11 @@ RSpec.describe StatusBadgeComponent, type: :component do
     expect(page).to have_css("span.badge.badge-error", text: "down")
   end
 
+  it "renders a degraded status as a warning badge" do
+    render_inline(described_class.new(status: :degraded))
+    expect(page).to have_css("span.badge.badge-warning", text: "degraded")
+  end
+
   it "renders an unknown status as a ghost badge" do
     render_inline(described_class.new(status: :unknown))
     expect(page).to have_css("span.badge.badge-ghost", text: "unknown")

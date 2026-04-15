@@ -7,6 +7,10 @@ class StatusBadgeComponentPreview < ViewComponent::Preview
     render(StatusBadgeComponent.new(status: :down))
   end
 
+  def degraded
+    render(StatusBadgeComponent.new(status: :degraded))
+  end
+
   def unknown
     render(StatusBadgeComponent.new(status: :unknown))
   end

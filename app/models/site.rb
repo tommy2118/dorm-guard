@@ -7,7 +7,9 @@ class Site < ApplicationRecord
 
   DNS_HOSTNAME_REGEX = /\A[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\z/i
 
-  enum :status, { unknown: 0, up: 1, down: 2 }, default: :unknown
+  # Integer 3 is intentionally skipped. :degraded is appended at 4 so
+  # :down stays at 2 and existing stored values never need to renumber.
+  enum :status, { unknown: 0, up: 1, down: 2, degraded: 4 }, default: :unknown
   enum :check_type, { http: 0, ssl: 1, tcp: 2, dns: 3, content_match: 4 }, default: :http
 
   serialize :expected_status_codes, coder: JSON

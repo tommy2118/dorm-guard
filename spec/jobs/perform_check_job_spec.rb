@@ -292,6 +292,39 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when status flips to :degraded (not :down)" do
+      let(:degraded_http_result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 5000,
+          error_message: nil,
+          checked_at: Time.current,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      before do
+        site.update!(status: :up)
+        # Force derive_status to return :degraded by stubbing it directly —
+        # Slice 9 doesn't yet emit :degraded from any checker, so we simulate
+        # the Slice 10 outcome to assert Slice 9's alert guard.
+        allow_any_instance_of(described_class)
+          .to receive(:derive_status).and_return(:degraded)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(degraded_http_result)
+      end
+
+      it "transitions the site to :degraded" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_degraded
+      end
+
+      it "does NOT enqueue a downtime alert (degraded is neither failing nor healthy)" do
+        expect { described_class.perform_now(site.id) }
+          .not_to have_enqueued_mail(DowntimeAlertMailer)
+      end
+    end
+
     context "when the site stays up (up→up)" do
       before do
         site.update!(status: :up)
