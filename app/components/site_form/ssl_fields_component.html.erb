@@ -1,0 +1,11 @@
+<div class="form-control">
+  <%= form.label :tls_port, "TLS port", class: "label label-text font-medium" %>
+  <%= form.number_field :tls_port,
+        value: site.tls_port || Site::DEFAULT_TLS_PORT,
+        min: 1,
+        max: 65_535,
+        class: "input input-bordered w-full#{' input-error' if field_error(:tls_port)}" %>
+  <% if (msg = field_error(:tls_port)) %>
+    <p class="mt-1 text-sm text-error"><%= msg %></p>
+  <% end %>
+</div>

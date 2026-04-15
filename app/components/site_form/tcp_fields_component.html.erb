@@ -1,0 +1,11 @@
+<div class="form-control">
+  <%= form.label :tcp_port, "TCP port", class: "label label-text font-medium" %>
+  <%= form.number_field :tcp_port,
+        value: site.tcp_port || Site::DEFAULT_TCP_PORT,
+        min: 1,
+        max: 65_535,
+        class: "input input-bordered w-full#{' input-error' if field_error(:tcp_port)}" %>
+  <% if (msg = field_error(:tcp_port)) %>
+    <p class="mt-1 text-sm text-error"><%= msg %></p>
+  <% end %>
+</div>

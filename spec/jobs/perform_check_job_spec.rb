@@ -6,20 +6,22 @@ RSpec.describe PerformCheckJob, type: :job do
   end
   let(:checked_at) { Time.current }
   let(:result) do
-    HttpChecker::Result.new(
+    CheckOutcome.new(
       status_code: 200,
       response_time_ms: 42,
       error_message: nil,
-      checked_at: checked_at
+      checked_at: checked_at,
+      body: nil,
+      metadata: {}
     )
   end
 
   before do
-    allow(HttpChecker).to receive(:check).with(site.url).and_return(result)
+    allow(CheckDispatcher).to receive(:call).with(site).and_return(result)
   end
 
   describe "#perform" do
-    it "creates a CheckResult from the HttpChecker response" do
+    it "creates a CheckResult from the dispatched checker response" do
       expect { described_class.perform_now(site.id) }.to change(CheckResult, :count).by(1)
 
       check = CheckResult.last
@@ -43,7 +45,14 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 3xx" do
       let(:result) do
-        HttpChecker::Result.new(status_code: 302, response_time_ms: 10, error_message: nil, checked_at: checked_at)
+        CheckOutcome.new(
+          status_code: 302,
+          response_time_ms: 10,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
       end
 
       it "marks the site as up" do
@@ -54,7 +63,14 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 4xx" do
       let(:result) do
-        HttpChecker::Result.new(status_code: 404, response_time_ms: 10, error_message: nil, checked_at: checked_at)
+        CheckOutcome.new(
+          status_code: 404,
+          response_time_ms: 10,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
       end
 
       it "marks the site as down" do
@@ -65,7 +81,14 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 5xx" do
       let(:result) do
-        HttpChecker::Result.new(status_code: 503, response_time_ms: 10, error_message: nil, checked_at: checked_at)
+        CheckOutcome.new(
+          status_code: 503,
+          response_time_ms: 10,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
       end
 
       it "marks the site as down" do
@@ -74,13 +97,273 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when an SSL site's result carries metadata[:classification]" do
+      let(:ssl_site) do
+        Site.create!(
+          name: "Secure site",
+          url: "https://example.com",
+          interval_seconds: 60,
+          check_type: :ssl,
+          tls_port: 443
+        )
+      end
+
+      before { allow(CheckDispatcher).to receive(:call).with(ssl_site).and_return(classified_result) }
+
+      context "with classification :degraded" do
+        let(:classified_result) do
+          CheckOutcome.new(
+            status_code: nil,
+            response_time_ms: 120,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: { cert_not_after: Time.current + 20 * 86_400, classification: :degraded }
+          )
+        end
+
+        it "transitions the site to :degraded" do
+          described_class.perform_now(ssl_site.id)
+          expect(ssl_site.reload).to be_degraded
+        end
+      end
+
+      context "with classification :up" do
+        let(:classified_result) do
+          CheckOutcome.new(
+            status_code: nil,
+            response_time_ms: 120,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: { cert_not_after: Time.current + 60 * 86_400, classification: :up }
+          )
+        end
+
+        it "transitions the site to :up" do
+          described_class.perform_now(ssl_site.id)
+          expect(ssl_site.reload).to be_up
+        end
+      end
+    end
+
+    context "when an HTTP site's response exceeds slow_threshold_ms" do
+      let(:site) do
+        Site.create!(
+          name: "Slow API", url: "https://example.com",
+          interval_seconds: 60, slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 1200,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "transitions the site to :degraded" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_degraded
+      end
+    end
+
+    context "when an HTTP site's response is faster than slow_threshold_ms" do
+      let(:site) do
+        Site.create!(
+          name: "Fast API", url: "https://example.com",
+          interval_seconds: 60, slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 100,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "keeps the site :up" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_up
+      end
+    end
+
+    context "when the site has expected_status_codes set" do
+      let(:site) do
+        Site.create!(
+          name: "API", url: "https://example.com", interval_seconds: 60,
+          expected_status_codes: [ 200, 301 ]
+        )
+      end
+
+      context "and the response status is in the allowlist" do
+        let(:result) do
+          CheckOutcome.new(
+            status_code: 301,
+            response_time_ms: 10,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: {}
+          )
+        end
+
+        it "marks the site as up" do
+          described_class.perform_now(site.id)
+          expect(site.reload).to be_up
+        end
+      end
+
+      context "and the response status is NOT in the allowlist" do
+        let(:result) do
+          CheckOutcome.new(
+            status_code: 202,
+            response_time_ms: 10,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: {}
+          )
+        end
+
+        it "marks the site as down (allowlist is an override, not an addition)" do
+          described_class.perform_now(site.id)
+          expect(site.reload).to be_down
+        end
+      end
+    end
+
+    # PR #26 review finding: the slow-response downgrade must apply AFTER
+    # the allowlist success verdict, not be short-circuited by it. A 200 in
+    # the allowlist that's also slow should be :degraded, not :up.
+    context "when an allowlist-success site is also slow" do
+      let(:site) do
+        Site.create!(
+          name: "Slow allowlisted API",
+          url: "https://example.com",
+          interval_seconds: 60,
+          expected_status_codes: [ 200, 301 ],
+          slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 1200,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "downgrades allowlist-success to :degraded on slow response" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_degraded
+      end
+    end
+
+    context "when an allowlist-miss response is also slow" do
+      let(:site) do
+        Site.create!(
+          name: "Failing slow API",
+          url: "https://example.com",
+          interval_seconds: 60,
+          expected_status_codes: [ 200, 301 ],
+          slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 500,
+          response_time_ms: 1200,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "stays :down — failure trumps slowness" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_down
+      end
+    end
+
+    context "when a content-match check reports matched: false" do
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 42,
+          error_message: nil,
+          checked_at: checked_at,
+          body: "hello",
+          metadata: { matched: false, pattern: "welcome" }
+        )
+      end
+
+      it "marks the site as down even though HTTP returned 200" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_down
+      end
+    end
+
+    context "when a content-match check reports matched: true" do
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 42,
+          error_message: nil,
+          checked_at: checked_at,
+          body: "welcome aboard",
+          metadata: { matched: true, pattern: "welcome" }
+        )
+      end
+
+      it "marks the site as up" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_up
+      end
+    end
+
+    context "when the check succeeds with nil status_code (non-HTTP check type)" do
+      let(:result) do
+        CheckOutcome.new(
+          status_code: nil,
+          response_time_ms: 12,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: { cert_not_after: Time.current + 90 * 86_400 }
+        )
+      end
+
+      it "marks the site as up (nil status_code + nil error_message = success for non-HTTP)" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_up
+      end
+    end
+
     context "when the check has a transport-level error" do
       let(:result) do
-        HttpChecker::Result.new(
+        CheckOutcome.new(
           status_code: nil,
           response_time_ms: 500,
           error_message: "Faraday::ConnectionFailed: refused",
-          checked_at: checked_at
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
         )
       end
 
@@ -103,24 +386,28 @@ RSpec.describe PerformCheckJob, type: :job do
 
   describe "downtime alert dispatch" do
     let(:down_result) do
-      HttpChecker::Result.new(
+      CheckOutcome.new(
         status_code: 503,
         response_time_ms: 50,
         error_message: nil,
-        checked_at: Time.current
+        checked_at: Time.current,
+        body: nil,
+        metadata: {}
       )
     end
     let(:up_result) do
-      HttpChecker::Result.new(
+      CheckOutcome.new(
         status_code: 200,
         response_time_ms: 50,
         error_message: nil,
-        checked_at: Time.current
+        checked_at: Time.current,
+        body: nil,
+        metadata: {}
       )
     end
 
     context "when status flips from unknown to down (first ever check)" do
-      before { allow(HttpChecker).to receive(:check).with(site.url).and_return(down_result) }
+      before { allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result) }
 
       it "enqueues a DowntimeAlertMailer.site_down delivery for the site" do
         expect { described_class.perform_now(site.id) }
@@ -131,7 +418,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when status flips from up to down" do
       before do
         site.update!(status: :up)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(down_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
       end
 
       it "enqueues a DowntimeAlertMailer.site_down delivery" do
@@ -143,7 +430,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when the site was already down (down→down)" do
       before do
         site.update!(status: :down)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(down_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
       end
 
       it "does NOT enqueue another alert (no spam)" do
@@ -155,7 +442,7 @@ RSpec.describe PerformCheckJob, type: :job do
     context "when status flips from down to up (recovery)" do
       before do
         site.update!(status: :down)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(up_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(up_result)
       end
 
       it "does NOT enqueue an alert (no recovery emails in this slice)" do
@@ -164,10 +451,43 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when status flips to :degraded (not :down)" do
+      let(:degraded_http_result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 5000,
+          error_message: nil,
+          checked_at: Time.current,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      before do
+        site.update!(status: :up)
+        # Force derive_status to return :degraded by stubbing it directly —
+        # Slice 9 doesn't yet emit :degraded from any checker, so we simulate
+        # the Slice 10 outcome to assert Slice 9's alert guard.
+        allow_any_instance_of(described_class)
+          .to receive(:derive_status).and_return(:degraded)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(degraded_http_result)
+      end
+
+      it "transitions the site to :degraded" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_degraded
+      end
+
+      it "does NOT enqueue a downtime alert (degraded is neither failing nor healthy)" do
+        expect { described_class.perform_now(site.id) }
+          .not_to have_enqueued_mail(DowntimeAlertMailer)
+      end
+    end
+
     context "when the site stays up (up→up)" do
       before do
         site.update!(status: :up)
-        allow(HttpChecker).to receive(:check).with(site.url).and_return(up_result)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(up_result)
       end
 
       it "does NOT enqueue an alert" do

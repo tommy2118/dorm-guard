@@ -2,6 +2,7 @@ class StatusBadgeComponent < ApplicationComponent
   CLASSES_BY_STATUS = {
     up: "badge badge-success",
     down: "badge badge-error",
+    degraded: "badge badge-warning",
     unknown: "badge badge-ghost"
   }.freeze
 

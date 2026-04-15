@@ -7,7 +7,7 @@ RSpec.describe HttpChecker do
     context "with a 200 response" do
       before { stub_request(:get, url).to_return(status: 200, body: "ok") }
 
-      it "returns a Result with the status code" do
+      it "returns a CheckOutcome with the status code" do
         expect(described_class.check(url).status_code).to eq(200)
       end
 
@@ -23,6 +23,38 @@ RSpec.describe HttpChecker do
         before_call = Time.current
         result = described_class.check(url)
         expect(result.checked_at).to be_between(before_call, Time.current)
+      end
+
+      it "populates body with the response body" do
+        expect(described_class.check(url).body).to eq("ok")
+      end
+
+      it "populates metadata as an empty hash" do
+        expect(described_class.check(url).metadata).to eq({})
+      end
+
+      it "returns a CheckOutcome value object" do
+        expect(described_class.check(url)).to be_a(CheckOutcome)
+      end
+    end
+
+    context "with a response body larger than the 1 MiB cap" do
+      let(:big_body) { "x" * (HttpChecker::BODY_BYTE_CAP + 5_000) }
+      before { stub_request(:get, url).to_return(status: 200, body: big_body) }
+
+      it "truncates body to exactly 1 MiB" do
+        expect(described_class.check(url).body.bytesize).to eq(HttpChecker::BODY_BYTE_CAP)
+      end
+    end
+
+    context "with a response containing invalid UTF-8 sequences" do
+      before { stub_request(:get, url).to_return(status: 200, body: "good\xFFbad") }
+
+      it "scrubs invalid bytes so body is valid UTF-8" do
+        body = described_class.check(url).body
+        expect(body.encoding).to eq(Encoding::UTF_8)
+        expect(body.valid_encoding?).to be true
+        expect(body).to include("good")
       end
     end
 
@@ -49,7 +81,7 @@ RSpec.describe HttpChecker do
     context "on a timeout" do
       before { stub_request(:get, url).to_timeout }
 
-      it "returns a Result with no status_code" do
+      it "returns a CheckOutcome with no status_code" do
         expect(described_class.check(url).status_code).to be_nil
       end
 
@@ -60,6 +92,10 @@ RSpec.describe HttpChecker do
       it "still records a response_time_ms" do
         expect(described_class.check(url).response_time_ms).to be >= 0
       end
+
+      it "leaves body nil when the transport layer failed" do
+        expect(described_class.check(url).body).to be_nil
+      end
     end
 
     context "on a transport-level failure (DNS, connection refused, TLS)" do
@@ -69,7 +105,7 @@ RSpec.describe HttpChecker do
       # rescuing a grab bag of Net::HTTP / Socket / OpenSSL classes.
       before { stub_request(:get, url).to_raise(SocketError.new("getaddrinfo failed")) }
 
-      it "returns a Result with no status_code" do
+      it "returns a CheckOutcome with no status_code" do
         expect(described_class.check(url).status_code).to be_nil
       end
 
@@ -98,6 +134,44 @@ RSpec.describe HttpChecker do
         result = described_class.check("javascript:alert(1)")
         expect(result.status_code).to be_nil
         expect(result.error_message).to be_present
+      end
+    end
+
+    context "with follow_redirects: true (default) and a 301 response" do
+      before do
+        stub_request(:get, url).to_return(status: 301, headers: { "Location" => "https://final.example.com" })
+        stub_request(:get, "https://final.example.com").to_return(status: 200, body: "final")
+      end
+
+      it "follows the redirect and returns the final status_code" do
+        expect(described_class.check(url).status_code).to eq(200)
+      end
+
+      it "returns the final body after following redirects" do
+        expect(described_class.check(url).body).to eq("final")
+      end
+    end
+
+    context "with follow_redirects: false and a 301 response" do
+      before do
+        stub_request(:get, url).to_return(status: 301, headers: { "Location" => "https://final.example.com" })
+      end
+
+      it "returns the 301 status without following" do
+        expect(described_class.check(url, follow_redirects: false).status_code).to eq(301)
+      end
+    end
+
+    describe "Faraday middleware ordering" do
+      it "places SsrfGuard before faraday-follow_redirects so every redirect hop is validated" do
+        conn = HttpChecker.send(:new).send(:connection, follow_redirects: true)
+        handler_classes = conn.builder.handlers.map(&:klass)
+        ssrf_index = handler_classes.index(SsrfGuard)
+        redirect_index = handler_classes.index(Faraday::FollowRedirects::Middleware)
+
+        expect(ssrf_index).not_to be_nil
+        expect(redirect_index).not_to be_nil
+        expect(ssrf_index).to be < redirect_index
       end
     end
 

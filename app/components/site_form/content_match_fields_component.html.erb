@@ -1,0 +1,13 @@
+<div class="form-control">
+  <%= form.label :content_match_pattern, "Content must contain", class: "label label-text font-medium" %>
+  <%= form.text_field :content_match_pattern,
+        placeholder: "Welcome to our app",
+        maxlength: Site::CONTENT_MATCH_PATTERN_MAX,
+        class: "input input-bordered w-full#{' input-error' if field_error(:content_match_pattern)}" %>
+  <p class="mt-1 text-sm text-base-content/70">
+    We search the first 1 MiB of the response body. Patterns appearing past that point will not match.
+  </p>
+  <% if (msg = field_error(:content_match_pattern)) %>
+    <p class="mt-1 text-sm text-error"><%= msg %></p>
+  <% end %>
+</div>
