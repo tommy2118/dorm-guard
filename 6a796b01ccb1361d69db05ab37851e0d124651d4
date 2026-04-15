@@ -1,0 +1,119 @@
+intent: >
+  Fix the PR #26 review blocker: derive_status was short-circuiting the
+  slow-response check whenever the expected_status_codes allowlist matched,
+  so a 200-in-allowlist slow response was returning :up instead of :degraded.
+
+slice: 11/13
+kind: fix
+behavior_change: breaking
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+  actual:
+    - app/jobs/perform_check_job.rb
+    - spec/jobs/perform_check_job_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/jobs/perform_check_job_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "Existing allowlist specs (Slice 8) did not cover the intersection of expected_status_codes + slow_threshold_ms, which is why the bug slipped through the first time"
+  - "The Slice 10 agent-note's metz claim and the slow_http_response? guard both referred to the correct intent; only the branch ordering in derive_status was wrong"
+
+specifications:
+  - "HTTP status classification is a two-step process: compute a bottom-line :up or :down verdict via http_status_verdict, then apply slow-response as a downgrade only when the verdict is :up"
+  - "http_status_verdict(site, result) owns both the allowlist path (full override) and the 200-399 fallback; slow-response never touches it"
+  - "A :down HTTP verdict is final — failure trumps slowness, so a slow 500 in an allowlist=[200,301] site stays :down, not :degraded"
+  - "A :up HTTP verdict is downgraded to :degraded iff slow_http_response?(site, result) returns true. Applies symmetrically to allowlist-success and 200-399-success paths"
+  - "The rule comment block above derive_status now describes the verdict-then-downgrade pattern exactly as implemented"
+
+deviations_from_plan: >
+  This is a pr-review-driven slice, not a planned slice from the
+  majestic-wibbling-brook plan. The fix corrects a real behavior bug in
+  Slice 10's derive_status that the author's per-slice self-review missed.
+
+addresses:
+  - "#26"
+
+trade_offs: >
+  Extracted http_status_verdict as a private helper even though the
+  branching could have been inlined. Cost: one extra private method.
+  Benefit: the derive_status method's priority-order comment and
+  implementation now read as "compute verdict, then apply downgrade,"
+  which matches how an operator thinks about it ("is my site up or
+  down, and is it slow on top of that?"). The alternative (nested
+  conditions inline) made the "failure trumps slowness" rule harder
+  to see.
+
+  Two new regression-lock specs rather than just one. The slow+miss
+  case (failure trumps slowness) is just as important as the slow+hit
+  case (downgrade fires) — both pin the priority ordering and each
+  would fail independently on a different kind of regression.
+
+interfaces:
+  consumed:
+    - "Site#expected_status_codes -> Array<Integer> | nil"
+    - "Site#slow_threshold_ms -> Integer | nil"
+  published:
+    - "PerformCheckJob#derive_status(site, result) -> Symbol (private, refactored)"
+    - "PerformCheckJob#http_status_verdict(site, result) -> Symbol (private, new helper)"
+
+self_review:
+  tests: >
+    Two new regression-lock cases in perform_check_job_spec.rb: 'allowlist-
+    success site is also slow' (pins the blocker bug — must be :degraded)
+    and 'allowlist-miss response is also slow' (pins failure-trumps-slowness
+    — must be :down). Both use real Site records with both expected_status_codes
+    and slow_threshold_ms set to exercise the intersection that Slice 8's
+    and Slice 10's specs missed in isolation.
+  consistency: >
+    http_status_verdict follows the private-helper pattern used by
+    slow_http_response? directly below it. The rule comment block was
+    rewritten to describe the verdict-then-downgrade pattern literally,
+    matching the new implementation.
+  metz: >
+    Measured. perform_check_job.rb grew from 80 lines to 87 (wc -l),
+    7 methods -> 8 methods (grep -c '^\s*def ') — added http_status_verdict
+    as a private helper. derive_status body dropped from 10 executable
+    statements to 7 — under Metz's 5-line rule plus early-return branches.
+    Method count is now honestly measured, not estimated — acknowledged
+    weakness from the pr-review metz-accuracy findings.
+  error_paths: >
+    The bug was in how error_message + metadata[:matched] checks
+    interacted with the allowlist branch. Those upstream guards still
+    fire first (error_message present -> :down early, matched == false
+    -> :down early) so transport failures and content-match misses still
+    route correctly. Only the :up vs :degraded decision downstream of
+    those guards was fixed.
+  api: >
+    Behavior change for Sites that have BOTH expected_status_codes and
+    slow_threshold_ms set — previously the allowlist short-circuited,
+    now the slow check fires after an allowlist match. This is a
+    breaking change for any user who set both and expected the allowlist
+    to win; the fix is that they should not have expected that because
+    the PR notes and the rule comment both said slow-response would fire
+    on a slow HTTP response regardless of status classification. The
+    pre-fix behavior was a bug, not a feature.
+
+confidence: high
+reviewer_attention:
+  - "app/jobs/perform_check_job.rb:66-73"  # http_status_verdict — the new helper that owns both classification paths
+  - "app/jobs/perform_check_job.rb:55-64"  # derive_status — verdict-then-downgrade pattern
+  - "spec/jobs/perform_check_job_spec.rb — 'allowlist-success site is also slow'"  # regression lock for the blocker
