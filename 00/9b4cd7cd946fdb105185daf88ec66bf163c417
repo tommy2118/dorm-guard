@@ -9,8 +9,13 @@ behavior_change: additive
 reversibility: reversible
 
 scope:
+  # site_form_component.rb (the class, not the template) was retroactively
+  # declared during pre-merge cleanup. Adding the #timezone_options helper
+  # on the class is the natural home for the collection the new template
+  # section renders — it mirrors the existing #check_type_options pattern.
   declared:
     - app/components/site_form_component.html.erb
+    - app/components/site_form_component.rb  # #timezone_options helper mirrors #check_type_options
     - app/controllers/sites_controller.rb
     - spec/components/site_form_component_spec.rb
     - spec/requests/sites_spec.rb
@@ -22,8 +27,7 @@ scope:
     - spec/components/site_form_component_spec.rb
     - spec/requests/sites_spec.rb
     - spec/components/previews/site_form_component_preview.rb
-  drift:
-    - app/components/site_form_component.rb  # added #timezone_options helper; consumer of the change, below the bar for a separate slice
+  drift: []
 
 proof:
   tests_run: bin/dc bundle exec rspec
