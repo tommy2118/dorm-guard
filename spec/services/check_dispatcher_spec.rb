@@ -17,8 +17,10 @@ RSpec.describe CheckDispatcher do
 
   describe ".call" do
     context "with an :http site" do
-      it "dispatches to HttpChecker.check with the site url" do
-        expect(HttpChecker).to receive(:check).with(http_site.url).and_return(outcome)
+      it "dispatches to HttpChecker.check with the site url and follow_redirects flag" do
+        expect(HttpChecker).to receive(:check)
+          .with(http_site.url, follow_redirects: true)
+          .and_return(outcome)
 
         expect(described_class.call(http_site)).to eq(outcome)
       end
@@ -88,9 +90,9 @@ RSpec.describe CheckDispatcher do
         )
       end
 
-      it "dispatches to ContentMatchChecker.check with url and pattern" do
+      it "dispatches to ContentMatchChecker.check with url, pattern, and follow_redirects" do
         expect(ContentMatchChecker).to receive(:check)
-          .with(url: "https://example.com", pattern: "Welcome")
+          .with(url: "https://example.com", pattern: "Welcome", follow_redirects: true)
           .and_return(outcome)
 
         expect(described_class.call(content_match_site)).to eq(outcome)

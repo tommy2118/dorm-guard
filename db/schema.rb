@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_14_204701) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_14_235028) do
   create_table "check_results", force: :cascade do |t|
     t.datetime "checked_at", null: false
     t.datetime "created_at", null: false
@@ -37,6 +37,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_14_204701) do
     t.string "content_match_pattern"
     t.datetime "created_at", null: false
     t.string "dns_hostname"
+    t.text "expected_status_codes"
+    t.boolean "follow_redirects", default: true, null: false
     t.integer "interval_seconds", null: false
     t.datetime "last_checked_at"
     t.string "name", null: false

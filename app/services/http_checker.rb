@@ -1,19 +1,23 @@
 require "faraday"
+require "faraday/follow_redirects"
 
 class HttpChecker
   OPEN_TIMEOUT = 5
   READ_TIMEOUT = 10
   BODY_BYTE_CAP = 1_048_576 # 1 MiB
+  # faraday-follow_redirects default hop limit is 3. If this needs to
+  # grow, make it a per-site configurable rather than raising the default.
+  MAX_REDIRECTS = 3
 
-  def self.check(url)
-    new.check(url)
+  def self.check(url, follow_redirects: true)
+    new.check(url, follow_redirects: follow_redirects)
   end
 
-  def check(url)
+  def check(url, follow_redirects: true)
     started_at = Time.current
     parsed = URI.parse(url)
     raise URI::InvalidURIError, "Unsupported scheme: #{parsed.scheme}" unless %w[http https].include?(parsed.scheme)
-    response = connection.get(url)
+    response = connection(follow_redirects: follow_redirects).get(url)
     success_outcome(response, started_at)
   rescue Faraday::Error, URI::InvalidURIError => e
     error_outcome(e, started_at)
@@ -21,9 +25,10 @@ class HttpChecker
 
   private
 
-  def connection
+  def connection(follow_redirects:)
     Faraday.new do |f|
-      f.use SsrfGuard # must come before any redirect middleware added in the future
+      f.use SsrfGuard # must come before any redirect middleware
+      f.response :follow_redirects, limit: MAX_REDIRECTS if follow_redirects
       f.options.open_timeout = OPEN_TIMEOUT
       f.options.timeout = READ_TIMEOUT
     end

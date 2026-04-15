@@ -1,4 +1,6 @@
 <% case site.check_type %>
+<% when "http" %>
+  <%= render(SiteForm::HttpOptionsFieldsComponent.new(form: form, site: site)) %>
 <% when "ssl" %>
   <%= render(SiteForm::SslFieldsComponent.new(form: form, site: site)) %>
 <% when "tcp" %>
@@ -7,4 +9,5 @@
   <%= render(SiteForm::DnsFieldsComponent.new(form: form, site: site)) %>
 <% when "content_match" %>
   <%= render(SiteForm::ContentMatchFieldsComponent.new(form: form, site: site)) %>
+  <%= render(SiteForm::HttpOptionsFieldsComponent.new(form: form, site: site)) %>
 <% end %>

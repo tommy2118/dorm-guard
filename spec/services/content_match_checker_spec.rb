@@ -17,7 +17,7 @@ RSpec.describe ContentMatchChecker do
   describe ".check" do
     context "when the HTTP response body contains the pattern" do
       before do
-        allow(HttpChecker).to receive(:check).with(url).and_return(CheckOutcome.new(**base_outcome_attrs))
+        allow(HttpChecker).to receive(:check).with(url, follow_redirects: true).and_return(CheckOutcome.new(**base_outcome_attrs))
       end
 
       it "returns metadata[:matched] = true" do
@@ -41,7 +41,7 @@ RSpec.describe ContentMatchChecker do
 
     context "when the HTTP response body does NOT contain the pattern" do
       before do
-        allow(HttpChecker).to receive(:check).with(url)
+        allow(HttpChecker).to receive(:check).with(url, follow_redirects: true)
           .and_return(CheckOutcome.new(**base_outcome_attrs.merge(body: "Hello from the other page")))
       end
 
@@ -64,7 +64,7 @@ RSpec.describe ContentMatchChecker do
       end
 
       before do
-        allow(HttpChecker).to receive(:check).with(url).and_return(transport_failure)
+        allow(HttpChecker).to receive(:check).with(url, follow_redirects: true).and_return(transport_failure)
       end
 
       it "passes the HTTP failure outcome through unchanged" do
@@ -76,7 +76,7 @@ RSpec.describe ContentMatchChecker do
 
     context "when the HTTP response has an empty body" do
       before do
-        allow(HttpChecker).to receive(:check).with(url)
+        allow(HttpChecker).to receive(:check).with(url, follow_redirects: true)
           .and_return(CheckOutcome.new(**base_outcome_attrs.merge(body: "")))
       end
 
@@ -87,7 +87,7 @@ RSpec.describe ContentMatchChecker do
 
     context "when the HTTP response body is nil" do
       before do
-        allow(HttpChecker).to receive(:check).with(url)
+        allow(HttpChecker).to receive(:check).with(url, follow_redirects: true)
           .and_return(CheckOutcome.new(**base_outcome_attrs.merge(body: nil)))
       end
 

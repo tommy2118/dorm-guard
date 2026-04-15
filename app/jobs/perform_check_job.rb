@@ -30,15 +30,19 @@ class PerformCheckJob < ApplicationJob
 
   def update_site(site, result)
     site.update!(
-      status: derive_status(result),
+      status: derive_status(site, result),
       last_checked_at: result.checked_at
     )
   end
 
-  def derive_status(result)
+  def derive_status(site, result)
     return :down if result.error_message.present?
     return :down if result.metadata[:matched] == false # content-match miss
     return :up if result.status_code.nil? # non-HTTP checks signal success via nil error_message
+
+    if site.expected_status_codes.present?
+      return site.expected_status_codes.include?(result.status_code) ? :up : :down
+    end
 
     result.status_code.between?(200, 399) ? :up : :down
   end

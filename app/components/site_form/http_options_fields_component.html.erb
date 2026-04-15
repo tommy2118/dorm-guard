@@ -1,0 +1,20 @@
+<div class="form-control">
+  <label class="label cursor-pointer justify-start gap-3">
+    <%= form.check_box :follow_redirects, class: "checkbox checkbox-primary" %>
+    <span class="label-text">Follow HTTP redirects (up to <%= HttpChecker::MAX_REDIRECTS %> hops)</span>
+  </label>
+</div>
+
+<div class="form-control">
+  <%= form.label :expected_status_codes, "Expected status codes", class: "label label-text font-medium" %>
+  <%= form.text_field :expected_status_codes,
+        value: site.expected_status_codes_for_display,
+        placeholder: "200, 301",
+        class: "input input-bordered w-full#{' input-error' if field_error(:expected_status_codes)}" %>
+  <p class="mt-1 text-sm text-base-content/70">
+    Leave blank for default (200-399). If you list codes, ONLY those codes count as up.
+  </p>
+  <% if (msg = field_error(:expected_status_codes)) %>
+    <p class="mt-1 text-sm text-error"><%= msg %></p>
+  <% end %>
+</div>

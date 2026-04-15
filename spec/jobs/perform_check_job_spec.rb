@@ -97,6 +97,51 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when the site has expected_status_codes set" do
+      let(:site) do
+        Site.create!(
+          name: "API", url: "https://example.com", interval_seconds: 60,
+          expected_status_codes: [ 200, 301 ]
+        )
+      end
+
+      context "and the response status is in the allowlist" do
+        let(:result) do
+          CheckOutcome.new(
+            status_code: 301,
+            response_time_ms: 10,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: {}
+          )
+        end
+
+        it "marks the site as up" do
+          described_class.perform_now(site.id)
+          expect(site.reload).to be_up
+        end
+      end
+
+      context "and the response status is NOT in the allowlist" do
+        let(:result) do
+          CheckOutcome.new(
+            status_code: 202,
+            response_time_ms: 10,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: {}
+          )
+        end
+
+        it "marks the site as down (allowlist is an override, not an addition)" do
+          described_class.perform_now(site.id)
+          expect(site.reload).to be_down
+        end
+      end
+    end
+
     context "when a content-match check reports matched: false" do
       let(:result) do
         CheckOutcome.new(

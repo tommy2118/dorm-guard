@@ -19,7 +19,7 @@ class CheckDispatcher
   def self.call(site)
     case site.check_type
     when "http"
-      HttpChecker.check(site.url)
+      HttpChecker.check(site.url, follow_redirects: site.follow_redirects)
     when "ssl"
       SslChecker.check(host: URI.parse(site.url).host, port: site.tls_port)
     when "tcp"
@@ -27,7 +27,11 @@ class CheckDispatcher
     when "dns"
       DnsChecker.check(hostname: site.dns_hostname)
     when "content_match"
-      ContentMatchChecker.check(url: site.url, pattern: site.content_match_pattern)
+      ContentMatchChecker.check(
+        url: site.url,
+        pattern: site.content_match_pattern,
+        follow_redirects: site.follow_redirects
+      )
     else
       raise UnknownCheckType, site.check_type
     end

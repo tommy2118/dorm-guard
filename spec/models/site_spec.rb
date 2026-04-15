@@ -145,6 +145,59 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "expected_status_codes parsing + validation" do
+    it "stores nil for a blank string" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: ""))
+      expect(site.expected_status_codes).to be_nil
+    end
+
+    it "parses a comma-separated integer string into an array" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: "200, 301, 404"))
+      expect(site.expected_status_codes).to eq([ 200, 301, 404 ])
+    end
+
+    it "tolerates extra whitespace" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: "  200 ,201  ,  202 "))
+      expect(site.expected_status_codes).to eq([ 200, 201, 202 ])
+    end
+
+    it "rejects non-integer tokens with a validation error" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: "200, foo, 301"))
+      expect(site).not_to be_valid
+      expect(site.errors[:expected_status_codes].join).to match(/integers/)
+    end
+
+    it "rejects range-style strings (ranges are not supported)" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: "200-299"))
+      expect(site).not_to be_valid
+    end
+
+    it "rejects integers outside 100..599" do
+      expect(described_class.new(valid_attrs.merge(expected_status_codes: "99, 200"))).not_to be_valid
+      expect(described_class.new(valid_attrs.merge(expected_status_codes: "600"))).not_to be_valid
+    end
+
+    it "accepts a nil value as 'use default behavior'" do
+      expect(described_class.new(valid_attrs.merge(expected_status_codes: nil))).to be_valid
+    end
+
+    it "round-trips an array set directly (already parsed)" do
+      site = described_class.create!(valid_attrs.merge(expected_status_codes: [ 200, 301 ]))
+      expect(site.reload.expected_status_codes).to eq([ 200, 301 ])
+    end
+
+    it "renders as a comma-separated string for the form display helper" do
+      site = described_class.new(valid_attrs.merge(expected_status_codes: [ 200, 301 ]))
+      expect(site.expected_status_codes_for_display).to eq("200, 301")
+    end
+  end
+
+  describe "follow_redirects default" do
+    it "defaults to true for new :http sites" do
+      expect(described_class.new(valid_attrs).follow_redirects).to be true
+    end
+  end
+
   describe "content_match_pattern validation" do
     let(:cm_attrs) do
       valid_attrs.merge(check_type: :content_match, content_match_pattern: "Hello")
