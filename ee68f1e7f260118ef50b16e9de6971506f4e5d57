@@ -1,0 +1,84 @@
+intent: >
+  Close the loop: seed the demo environment so `bin/dc bin/rails db:seed`
+  gives an operator a realistic Epic 6 sandbox out of the box, and
+  document the new alert surface in the README.
+
+slice: 9/11
+kind: feature
+behavior_change: additive
+
+reversibility: trivial  # dev-only seed + markdown; no schema, no logic
+
+scope:
+  declared:
+    - db/seeds.rb
+    - README.md
+  actual:
+    - db/seeds.rb
+    - README.md
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec && bin/dc bin/rails db:seed
+  result: green
+  failing: 0
+
+tests:
+  needed: "no"
+  rationale: >
+    Seed and README changes don't warrant unit tests — the model/component
+    specs for slices 1-8 already exercise the shapes the seeds construct.
+    Ran bin/dc bin/rails db:seed manually to verify the seeds execute
+    without errors and create 9 AlertPreference records (3 preferences per
+    3 demo sites).
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+verification:
+  tested:
+    - "Full suite passes: 534 examples, 0 failures."
+  manual:
+    - "bin/dc bin/rails db:seed ran cleanly; AlertPreference.count is 9 after seed; each demo site has email + slack + webhook preferences."
+    - "Quiet-hours demo site carries quiet_hours_start=00:00, quiet_hours_end=23:59, quiet_hours_timezone=UTC as expected."
+
+assumptions:
+  - "The IANA reserved example.com targets will 404 but not hang. SSRF guard passes them. Acceptable for smoke verification."
+  - "Operators reading the README will discover DORM_GUARD_SLACK_WEBHOOK_URL and DORM_GUARD_GENERIC_WEBHOOK_URL overrides from the deployment-env table before running the smoke test with real integrations."
+
+specifications:
+  - "The Quiet-hours demo site is the only seeded site with a quiet_hours window. The other two demos can demonstrate normal alert flow."
+  - "Each demo site has exactly three preferences (email/slack/webhook). Changing this count changes the expected smoke-test signal count."
+  - "README's Alerting section is the user-facing contract for Epic 6. It names the key files (AlertDispatcher, AlertChannels::*, Site#propose_status) so operators can find the code from the prose."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Kept the existing 30 fixture sites for pagination tests and added 3
+  new demo sites instead of converting fixtures to carry alert prefs.
+  Two reasons: (1) pagination tests still need bulk, and (2) the demo
+  sites are conceptually distinct — they have names that signal intent
+  ('Quiet-hours demo') where fixtures are just 'Fixture 01' etc.
+
+  README prose keeps it factual: what the models do, where the code
+  lives, how to override for real delivery. No design rationale — that
+  will land in docs/decisions/pr-00XX-multi-channel-alerting.md during
+  the PR ritual.
+
+interfaces:
+  consumed:
+    - "AlertPreference model (slice 1)"
+    - "Site quiet_hours attributes (slice 2)"
+  published: []
+
+self_review:
+  consistency: "Seed structure matches the existing file's style (find_or_create_by! + nested config blocks). README alerting section mirrors the tone + structure of the existing Deployment environment section."
+  metz: "N/A (no new classes)."
+  tell_dont_ask: "Seed file tells the model how to find-or-create its own state; no getters chained."
+
+confidence: high
+reviewer_attention:
+  - "db/seeds.rb — the find_or_create_by! nested inside .alert_preferences is idempotent on re-seed (safe to run twice). If we ever change AlertPreference#find_or_create_by semantics, this would be the first place to break."
