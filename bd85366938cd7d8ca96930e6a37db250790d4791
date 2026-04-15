@@ -1,0 +1,113 @@
+intent: >
+  Give operators a UI to configure AlertPreferences per-site. First
+  nested resource in the app; introduces the cross-site scoping
+  pattern the rest of the dashboard can follow later.
+
+slice: 8b/11
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - config/routes.rb
+    - app/controllers/alert_preferences_controller.rb
+    - app/components/alert_preference_form_component.rb
+    - app/components/alert_preference_form_component.html.erb
+    - app/components/alert_preference_list_component.rb
+    - app/components/alert_preference_list_component.html.erb
+    - app/views/alert_preferences/index.html.erb
+    - app/views/alert_preferences/new.html.erb
+    - app/views/alert_preferences/edit.html.erb
+    - app/views/sites/show.html.erb
+    - spec/requests/alert_preferences_spec.rb
+    - spec/components/alert_preference_form_component_spec.rb
+    - spec/components/alert_preference_list_component_spec.rb
+    - spec/components/previews/alert_preference_form_component_preview.rb
+    - spec/components/previews/alert_preference_list_component_preview.rb
+  actual:
+    - config/routes.rb
+    - app/controllers/alert_preferences_controller.rb
+    - app/components/alert_preference_form_component.rb
+    - app/components/alert_preference_form_component.html.erb
+    - app/components/alert_preference_list_component.rb
+    - app/components/alert_preference_list_component.html.erb
+    - app/views/alert_preferences/index.html.erb
+    - app/views/alert_preferences/new.html.erb
+    - app/views/alert_preferences/edit.html.erb
+    - app/views/sites/show.html.erb
+    - spec/requests/alert_preferences_spec.rb
+    - spec/components/alert_preference_form_component_spec.rb
+    - spec/components/alert_preference_list_component_spec.rb
+    - spec/components/previews/alert_preference_form_component_preview.rb
+    - spec/components/previews/alert_preference_list_component_preview.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/requests/alert_preferences_spec.rb  # 11 examples covering all 6 actions + cross-site scoping
+    - spec/components/alert_preference_form_component_spec.rb  # 15 examples (channel options, event checkboxes, validation error rendering)
+    - spec/components/alert_preference_list_component_spec.rb  # 7 examples (empty + populated states)
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "Rails' default 404 handling for ActiveRecord::RecordNotFound returns status 404 in non-production environments (not :not_found → nil). Confirmed by the cross-site scoping spec."
+  - "The password in sign_in_as defaults to 'a_secure_passphrase_16' (spec/support/auth_helpers.rb). User creation in this spec matches."
+
+specifications:
+  - "Nested routes: resources :sites do resources :alert_preferences end — first nested resource in the app."
+  - "AlertPreferencesController#set_alert_preference scopes via @site.alert_preferences.find, NOT AlertPreference.find. Cross-site ID lookups raise ActiveRecord::RecordNotFound, which Rails renders as 404."
+  - "Strong params permit :channel, :target, :enabled, events: []. The events: [] scalar-array syntax is required for Rails' params.expect to deserialize a multi-checkbox submission correctly."
+  - "The empty events array is handled by a trailing hidden_field_tag with blank value — unchecking all boxes still sends the events[] key, which the model's normalize hook collapses to []."
+
+deviations_from_plan: none
+
+trade_offs: >
+  Chose a table-based list over a card grid. Tables are denser and the
+  alert-preferences listing is operational (ops-oriented), not marketing.
+  DaisyUI's table class plus channel badges give enough visual structure.
+
+  AlertPreferenceFormComponent does NOT conditionally render per-channel
+  fields (no SiteForm::TypeFieldsComponent equivalent) because the
+  form's only channel-varying surface is the target label. A sub-component
+  would be 15 lines of indirection for a label change.
+
+  Deletes use button_to with turbo_confirm rather than a rails_ujs data
+  attribute. Epic 5's DeleteButtonComponent does the same; consistent with
+  the project's existing idiom.
+
+interfaces:
+  consumed:
+    - "AlertPreference model (slice 1)"
+    - "Site#alert_preferences association (slice 1)"
+    - "ApplicationController#require_authentication (Epic 4)"
+  published:
+    - "site_alert_preferences_path(site)"
+    - "new_site_alert_preference_path(site)"
+    - "edit_site_alert_preference_path(site, alert_preference)"
+    - "site_alert_preference_path(site, alert_preference)"
+    - "AlertPreferenceFormComponent.new(site:, alert_preference:)"
+    - "AlertPreferenceListComponent.new(site:, alert_preferences:)"
+
+self_review:
+  consistency: "Mirrors SiteFormComponent's structure exactly — card-body + form-control + card-actions, same validation error rendering."
+  metz: "AlertPreferencesController is 43 lines; every action is 4 lines or fewer. Components are 30-50 lines each. Compliant."
+  security: "Cross-site scoping is the load-bearing check. Spec pins it: GET /sites/1/alert_preferences/<id-from-site-2> → 404. Without this, an authenticated user could read/edit any other site's preferences via URL manipulation."
+  tell_dont_ask: "Components receive the site + collection; view is thin wrappers. Controller tells AR what to do; AR tells the view."
+
+confidence: high
+reviewer_attention:
+  - "app/controllers/alert_preferences_controller.rb:46-50 set_alert_preference — the @site.alert_preferences.find scoping is what makes the cross-site 404 test pass. If anyone ever refactors this to AlertPreference.find(params[:id]), the spec should catch it — but that's a comment-level invariant worth noting"
+  - "app/components/alert_preference_form_component.html.erb:40 the hidden_field_tag with blank value — this is the idiom for 'the user unchecked all boxes'; without it, Rails doesn't send the events[] key at all and the server sees the field as unchanged"
