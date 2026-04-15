@@ -1,0 +1,101 @@
+intent: >
+  Fix a medium-severity correctness bug surfaced in human review: the Site
+  edit form's timezone <select> emits values that don't match the IANA
+  identifiers the model and seeds persist, causing pre-selection to fail
+  and silent timezone wipes on save.
+
+slice: fix
+kind: fix
+behavior_change: additive  # adds normalization; existing callers unaffected
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/models/site.rb
+    - app/components/site_form_component.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+  actual:
+    - app/models/site.rb
+    - app/components/site_form_component.rb
+    - spec/models/site_spec.rb
+    - spec/components/site_form_component_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rubocop && bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb  # 7 examples in a new "quiet_hours_timezone canonicalization" describe block
+    - spec/components/site_form_component_spec.rb  # 2 round-trip examples locking the persist/pre-select contract
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+verification:
+  tested:
+    - "Unit: Site#normalizes converts every input class (IANA idempotent, friendly name → IANA, UTC → Etc/UTC, whitespace strip, invalid passthrough, blank → nil, save round-trip)"
+    - "Component: A persisted site with quiet_hours_timezone='America/New_York' renders an edit form whose <select> has that exact option marked [selected]"
+    - "Component: Same behavior via the normalizer when input is a Rails friendly name"
+  manual:
+    - "Reproduced the original bug in Chrome pre-fix: created site 3 with tz=America/New_York via update_column (bypassing normalization), loaded /sites/3/edit, inspected the <select> via javascript_tool, confirmed hasMatchingOption=false and selectedText='(default Rails time zone)'. Screenshot captured."
+    - "After fix: will re-verify in Chrome after push to confirm the select now pre-selects America/New_York."
+
+assumptions:
+  - "ActiveSupport::TimeZone.all returns the same set of zones as the MAPPING constant plus Etc/UTC. The .all iteration + tz.tzinfo.name emits every IANA identifier a user could pick from the form."
+  - "tz.tzinfo.name for Rails TimeZone['UTC'] is 'Etc/UTC' (not 'UTC'). Verified empirically via bin/dc bin/rails runner before committing."
+  - "normalizes :foo runs on attribute assignment (Rails 8 behavior), not only on save. Site.new(quiet_hours_timezone: 'UTC').quiet_hours_timezone returns 'Etc/UTC' immediately."
+
+specifications:
+  - "Site#quiet_hours_timezone is always an IANA identifier after normalization, or nil."
+  - "SiteFormComponent#timezone_options emits [label, iana_value] tuples where label is tz.to_s (Rails formatted) and value is tz.tzinfo.name (IANA)."
+  - "A persisted tz roundtrips through the edit form without loss: POST value == render value == DB value."
+  - "Invalid tz names pass through the normalizer unchanged and are rejected by validate_quiet_hours_timezone with a proper error."
+
+deviations_from_plan: >
+  This slice wasn't in the Epic 6 plan — it's a review-driven fix landing
+  on the feature branch after the initial 11 slices + CI chore shipped.
+  Addresses review finding #1 which the reviewer marked as "fix before
+  merge."
+
+addresses: ["#46 human review"]
+
+trade_offs: >
+  Could have canonicalized the other direction (Rails friendly names
+  everywhere, specs and seeds would change). Rejected because IANA is
+  more universal, stable across Rails versions, grep-friendly, and
+  unambiguous ("Eastern Time (US & Canada)" spans multiple tz rules
+  — Indiana-Starke vs Eastern proper). Choosing IANA minimized test
+  churn: all existing specs already use IANA where they assert the
+  persisted value.
+
+  Could have done canonicalization in a before_validation callback
+  instead of `normalizes`. Rejected because `normalizes` runs on
+  assignment, so in-memory reads of site.quiet_hours_timezone always
+  return the canonical form without needing a save round-trip. This
+  matches the form's behavior (the form reads the attribute at render
+  time, before any save).
+
+interfaces:
+  consumed:
+    - "ActiveSupport::TimeZone#tzinfo#name (Rails core)"
+    - "Rails 8 normalizes callback"
+  published:
+    - "Site#quiet_hours_timezone always returns an IANA identifier or nil after assignment"
+
+self_review:
+  consistency: "normalizes pattern matches Rails 8 idioms and mirrors the `normalizes :target` line in app/models/alert_preference.rb:11 that Epic 6 already established."
+  metz: "Normalizer lambda is 4 lines. timezone_options helper is 3 lines. Compliant."
+  tell_dont_ask: "Caller (form) doesn't inspect the normalizer; it reads a canonical attribute. Good."
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb Site#normalizes :quiet_hours_timezone lambda — the fallback 'zone ? zone.tzinfo.name : value' returns the invalid value unchanged instead of nil. That's intentional (so the validator can reject with a meaningful error), but worth double-checking against the 'blank → nil' branch above it."
+  - "spec/components/site_form_component_spec.rb — the two round-trip tests are the regression lock. They hit the exact shape of the original bug. If a future refactor of timezone_options reverts to tz.name, these tests turn red."
