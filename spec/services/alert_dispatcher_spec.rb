@@ -23,10 +23,10 @@ RSpec.describe AlertDispatcher do
 
   def create_pref(channel:, events: %w[down up degraded], target: nil, enabled: true)
     default_target = case channel
-                     when :email   then "ops@example.com"
-                     when :slack   then "https://hooks.slack.com/services/T/B/X"
-                     when :webhook then "https://example.com/hook"
-                     end
+    when :email   then "ops@example.com"
+    when :slack   then "https://hooks.slack.com/services/T/B/X"
+    when :webhook then "https://example.com/hook"
+    end
     AlertPreference.create!(
       site: site,
       channel: channel,

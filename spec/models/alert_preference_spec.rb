@@ -39,13 +39,13 @@ RSpec.describe AlertPreference, type: :model do
 
   describe "events normalization" do
     it "coerces symbols and strings to a canonical string array" do
-      pref = described_class.new(valid_attrs(events: [:down, "up", "up", " degraded "]))
+      pref = described_class.new(valid_attrs(events: [ :down, "up", "up", " degraded " ]))
       pref.valid?
       expect(pref.events).to eq(%w[down up degraded])
     end
 
     it "rejects blank and nil entries" do
-      pref = described_class.new(valid_attrs(events: [nil, "", "down"]))
+      pref = described_class.new(valid_attrs(events: [ nil, "", "down" ]))
       pref.valid?
       expect(pref.events).to eq(%w[down])
     end

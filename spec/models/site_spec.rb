@@ -725,7 +725,7 @@ RSpec.describe Site, type: :model do
 
     it "commits down on the fifth check of a flap sequence" do
       site.status = "up"
-      results = [:down, :up, :down, :up, :down].map { |s| site.propose_status(s) }
+      results = [ :down, :up, :down, :up, :down ].map { |s| site.propose_status(s) }
       # Trace: candidate=down, cleared, candidate=down, cleared, candidate=down → no commit yet
       expect(results).to eq(%w[up up up up up])
       expect(site.status).to eq("up")
