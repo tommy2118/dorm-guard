@@ -242,6 +242,65 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    # PR #26 review finding: the slow-response downgrade must apply AFTER
+    # the allowlist success verdict, not be short-circuited by it. A 200 in
+    # the allowlist that's also slow should be :degraded, not :up.
+    context "when an allowlist-success site is also slow" do
+      let(:site) do
+        Site.create!(
+          name: "Slow allowlisted API",
+          url: "https://example.com",
+          interval_seconds: 60,
+          expected_status_codes: [ 200, 301 ],
+          slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 1200,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "downgrades allowlist-success to :degraded on slow response" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_degraded
+      end
+    end
+
+    context "when an allowlist-miss response is also slow" do
+      let(:site) do
+        Site.create!(
+          name: "Failing slow API",
+          url: "https://example.com",
+          interval_seconds: 60,
+          expected_status_codes: [ 200, 301 ],
+          slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 500,
+          response_time_ms: 1200,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "stays :down — failure trumps slowness" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_down
+      end
+    end
+
     context "when a content-match check reports matched: false" do
       let(:result) do
         CheckOutcome.new(
