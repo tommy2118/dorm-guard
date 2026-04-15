@@ -1,0 +1,175 @@
+intent: >
+  Wire :degraded emission from HTTP (slow response) and SSL (cert expiring
+  in 8-30 days), closing Epic 5's code scope.
+
+slice: 10/10
+kind: feature
+behavior_change: additive
+
+reversibility: entangled
+
+scope:
+  declared:
+    - db/migrate/20260415001849_add_slow_threshold_ms_to_sites.rb
+    - db/schema.rb
+    - app/jobs/perform_check_job.rb
+    - app/services/ssl_checker.rb
+    - app/models/site.rb
+    - app/components/site_form/http_options_fields_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/services/ssl_checker_spec.rb
+    - spec/models/site_spec.rb
+  actual:
+    - db/migrate/20260415001849_add_slow_threshold_ms_to_sites.rb
+    - db/schema.rb
+    - app/jobs/perform_check_job.rb
+    - app/services/ssl_checker.rb
+    - app/models/site.rb
+    - app/components/site_form/http_options_fields_component.html.erb
+    - app/controllers/sites_controller.rb
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/services/ssl_checker_spec.rb
+    - spec/models/site_spec.rb
+  drift: []
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/jobs/perform_check_job_spec.rb
+    - spec/services/ssl_checker_spec.rb
+    - spec/models/site_spec.rb
+
+lint:
+  run: bin/dc bundle exec rubocop
+  result: clean
+  count: 0
+
+assumptions:
+  - "OpenSSL::X509::Certificate#not_after minus Time.current in test fixtures produces an Integer (the Float-division-to-integer truncation in days_until_expiry is deterministic within a single test run modulo second-level drift)"
+  - "Slice 9's :degraded enum value at integer 4 is already persisted in the schema, so this slice does not need another migration to surface it"
+  - "ContentMatchChecker inherits the HTTP slow-response path because ContentMatchChecker wraps HttpChecker and the job's slow_http_response? check uses site.http? || site.content_match?"
+
+specifications:
+  - "HTTP slow-response classification lives in PerformCheckJob#slow_http_response?(site, result): true iff (site.http? or site.content_match?) and site.slow_threshold_ms.present? and result.response_time_ms > site.slow_threshold_ms"
+  - "SSL cert classification lives in SslChecker — the documented asymmetry from decision 3. Thresholds: days < 8 -> :down (error_message set); 8..30 -> :degraded; > 30 -> :up"
+  - "SslChecker stashes classification in metadata[:classification]; the job reads it first for :ssl sites (before the error_message or status_code checks)"
+  - "Slice 10 non-goal: no :degraded emission for :tcp, :dns, or :content_match-without-slow-threshold. TCP/DNS are binary signals; content-match falls back to inherited HTTP slow-response when configured"
+  - "Site.slow_threshold_ms nullable integer, validated in 100..60_000. clear_irrelevant_config nulls it for :ssl/:tcp/:dns saves"
+  - "PerformCheckJob#derive_status priority order (top-to-bottom first match):
+      (1) SSL + metadata[:classification] -> use it directly
+      (2) error_message present -> :down
+      (3) metadata[:matched] == false -> :down
+      (4) status_code nil -> :up
+      (5) expected_status_codes present -> in?(list) ? :up : :down
+      (6) slow_http_response? -> :degraded
+      (7) 200..399 -> :up, else :down"
+  - "The 30-day boundary for :degraded is inclusive (days <= 30 -> :degraded); 31-day cert is :up"
+  - "Slow threshold is active on content-match sites too, inherited from the wrapped HttpChecker's response_time_ms"
+
+deviations_from_plan: none
+
+trade_offs: >
+  derive_status is now 8 body lines (including comments) with 7 branches.
+  That's visibly over Metz's 5-line rule but splitting it into helpers
+  obscures the priority order — the order is the spec. Kept inline with
+  an explicit prose comment naming the rules. Alternative considered:
+  extract each branch into a predicate (ssl_classified?, error_down?,
+  match_miss_down?, non_http_up?, allowlist_verdict, slow_degraded?,
+  http_range_verdict) — rejected because the caller would be eight
+  single-line method calls and the logic would be spread across nine
+  methods instead of one.
+
+  SslChecker's 7-day critical threshold (Slice 3) became 8-day (Slice 10).
+  The Slice 3 agent-note named this as a forward reference; the change
+  is not a silent regression. SSL spec cases updated to the new thresholds.
+
+  slow_http_response? treats a zero-value slow_threshold_ms as "not set"
+  via blank? — but validation rejects values below 100, so a zero is
+  impossible in practice. Extra safety for anyone bypassing validation
+  via raw SQL.
+
+interfaces:
+  consumed:
+    - "Site#status -> String (now includes 'degraded')"
+    - "Site#slow_threshold_ms -> Integer | nil"
+    - "OpenSSL::X509::Certificate#not_after -> Time"
+  published:
+    - "Site#slow_threshold_ms= (integer writer)"
+    - "Site::SLOW_THRESHOLD_RANGE -> 100..60_000"
+    - "SslChecker::CRITICAL_DAYS -> 8 (previously 7)"
+    - "SslChecker::WARN_DAYS -> 30"
+
+self_review:
+  tests: >
+    SslChecker spec: 4 context blocks for the new 3-state classification
+    (well beyond 30 days -> :up, 8..30 days -> :degraded, boundary at
+    30 days inclusive -> :degraded, <8 days -> :down). Each asserts
+    metadata[:classification] plus error_message presence/absence.
+    PerformCheckJob spec: 4 new contexts covering ssl with :degraded
+    metadata, ssl with :up metadata, http with response_time > slow_threshold
+    -> :degraded, http with response_time < slow_threshold -> :up.
+    Site spec: 6 slow_threshold_ms cases covering nil, valid, below-min,
+    above-max, clear_irrelevant_config for tcp/ssl flips, and preservation
+    on content_match sites.
+  consistency: >
+    SslChecker structure preserved — the classify method stays the single
+    entry point from check(), and the new classification helpers
+    (classify_days, cert_metadata with classification param) follow the
+    Slice 3 style. SlowHttpResponse detection in the job mirrors the
+    existing allowlist-check pattern (guard clause + early return).
+  metz: >
+    Measured. ssl_checker.rb grew from 92 to 113 lines, 11 methods.
+    classify_days 3 body lines, classify 4, cert_metadata 6 (single hash).
+    perform_check_job.rb grew from 53 to 84 lines, 9 methods. derive_status
+    is the largest at 10 body lines; it's the declaratively-commented
+    priority-order method and splitting would hurt readability. slow_http_response?
+    is 4 body lines. site.rb is now 124 lines, still over the 100-line
+    limit, still deferred. No methods exceed 10 body lines.
+  duplication: >
+    None introduced. The slow-response check uses site.http? || site.content_match?
+    in one place (slow_http_response?); that same combination also appears
+    in clear_irrelevant_config (slow_threshold_ms = nil unless http? || content_match?).
+    Two call sites, kept inline rather than extracting a predicate.
+  mocking: >
+    SSL spec stubs stay the same (fake OpenSSL::X509::Certificate constructed
+    inline). Job spec uses real Site records, stubs CheckDispatcher.call.
+    No mocking of types we don't own beyond what Slice 3 already established.
+  error_paths: >
+    The error_message branch in derive_status still catches all checker-
+    level failures (SSL <8 days gets an error_message, so the SSL-specific
+    metadata[:classification] branch is only the deliberate "classified
+    success or warning" path). Slow-response emission has 3 guards: type
+    check, threshold present, response_time non-nil.
+  security: >
+    No new security-relevant surface. slow_threshold_ms can't be set outside
+    the 100-60000 range so DoS-via-tiny-threshold is rejected at the model
+    layer. Metadata[:classification] is only read for :ssl sites — a
+    malicious attempt to poison metadata from another check type has no
+    effect because the job only reads it when site.ssl? is true.
+  performance: >
+    slow_http_response? adds 3 cheap guard clauses to derive_status — O(1).
+    SslChecker's days_until_expiry is one Float division. No new hot-path
+    allocations.
+  api: >
+    Additive. Site::SLOW_THRESHOLD_RANGE, Site#slow_threshold_ms,
+    SslChecker::WARN_DAYS are new public constants/attributes. PerformCheckJob#derive_status
+    is private; its body changed but the callers are all internal to the
+    job. SslChecker::CRITICAL_DAYS changed from 7 to 8 — not strictly
+    backward-compatible if any external code referenced it, but no such
+    reference exists.
+  dead_code: >
+    None. SLOW_THRESHOLD_RANGE referenced in validation. CRITICAL_DAYS and
+    WARN_DAYS both used in classify_days. All new spec cases exercise the
+    new code paths.
+
+confidence: high
+reviewer_attention:
+  - "app/jobs/perform_check_job.rb:50-68"  # derive_status priority order — the rules comment and the branch order must stay in sync
+  - "app/services/ssl_checker.rb:70-75"  # classify_days boundary semantics (< 8, <= 30)
+  - "app/models/site.rb:clear_irrelevant_config"  # slow_threshold_ms is the 5th field scrubbed here — size is accumulating
