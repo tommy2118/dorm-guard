@@ -10,7 +10,18 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_15_001849) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_15_120001) do
+  create_table "alert_preferences", force: :cascade do |t|
+    t.integer "channel", null: false
+    t.datetime "created_at", null: false
+    t.boolean "enabled", default: true, null: false
+    t.text "events", null: false
+    t.integer "site_id", null: false
+    t.string "target", null: false
+    t.datetime "updated_at", null: false
+    t.index ["site_id"], name: "index_alert_preferences_on_site_id"
+  end
+
   create_table "check_results", force: :cascade do |t|
     t.datetime "checked_at", null: false
     t.datetime "created_at", null: false
@@ -58,6 +69,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_15_001849) do
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 
+  add_foreign_key "alert_preferences", "sites"
   add_foreign_key "check_results", "sites"
   add_foreign_key "sessions", "users"
 end

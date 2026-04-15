@@ -16,6 +16,7 @@ class Site < ApplicationRecord
   serialize :expected_status_codes, coder: JSON
 
   has_many :check_results, dependent: :destroy
+  has_many :alert_preferences, dependent: :destroy
 
   before_validation :clear_irrelevant_config
 
