@@ -124,13 +124,23 @@ self_review:
     Slice 3 style. SlowHttpResponse detection in the job mirrors the
     existing allowlist-check pattern (guard clause + early return).
   metz: >
-    Measured. ssl_checker.rb grew from 92 to 113 lines, 11 methods.
-    classify_days 3 body lines, classify 4, cert_metadata 6 (single hash).
-    perform_check_job.rb grew from 53 to 84 lines, 9 methods. derive_status
-    is the largest at 10 body lines; it's the declaratively-commented
-    priority-order method and splitting would hurt readability. slow_http_response?
-    is 4 body lines. site.rb is now 124 lines, still over the 100-line
-    limit, still deferred. No methods exceed 10 body lines.
+    Measured post-hoc (corrected from initial estimate). ssl_checker.rb
+    is 112 lines, 10 methods (self.check, check, with_tls_socket,
+    classify, classify_days, days_until_expiry, cert_metadata,
+    build_outcome, error_outcome, elapsed_ms). classify_days 3 body
+    lines, classify 4, cert_metadata 6 (single hash).
+    perform_check_job.rb is 80 lines, 7 methods (perform, apply_result,
+    record_check, update_site, derive_status, slow_http_response?,
+    notify_if_newly_down). derive_status is the largest at 10 body
+    lines; it's the declaratively-commented priority-order method and
+    splitting would hurt readability. slow_http_response? is 4 body
+    lines. site.rb is 120 lines, still over the 100-line limit, still
+    deferred. The earlier version of this note claimed "113 lines 11
+    methods" for ssl_checker, "84 lines 9 methods" for perform_check_job,
+    and "124 lines" for site — all estimated rather than measured.
+    pr-review flagged the discrepancies and this note was amended in
+    place. **Lesson: run wc -l and grep -c '^\s*def ' rather than
+    eyeballing the diff.**
   duplication: >
     None introduced. The slow-response check uses site.http? || site.content_match?
     in one place (slow_http_response?); that same combination also appears
