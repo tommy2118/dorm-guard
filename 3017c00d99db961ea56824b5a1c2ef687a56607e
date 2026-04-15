@@ -1,0 +1,92 @@
+intent: >
+  Give Site the 2-consecutive-check debounce contract that slice 7b will wire
+  into PerformCheckJob. Pure model; inert until then.
+
+slice: 3/11
+kind: feature
+behavior_change: additive
+
+reversibility: entangled  # adds schema columns + new enum mapping
+
+scope:
+  declared:
+    - db/migrate/20260415120003_add_candidate_status_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+  actual:
+    - db/migrate/20260415120003_add_candidate_status_to_sites.rb
+    - db/schema.rb
+    - app/models/site.rb
+    - spec/models/site_spec.rb
+    - spec/rails_helper.rb
+  drift:
+    - spec/rails_helper.rb  # wired ActiveSupport::Testing::TimeHelpers to support the "no updated_at mutation" spec; test-only, below the bar for a separate slice
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/models/site_spec.rb  # new "propose_status" describe block (9 examples)
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "Rails 8 enum :candidate_status with prefix: :candidate, allow_nil: true allows the same symbol mapping as the status enum without scope collisions."
+
+specifications:
+  - "Site#propose_status mutates self in memory only — does NOT call save, does NOT touch updated_at."
+  - "Rule: if new_status == status → clear candidate; if new_status == candidate_status → commit status; else → stash new_status as candidate."
+  - "Returns the proposed effective status as a string so callers can compare to pre-proposal value."
+  - "candidate_status reuses the same integer mapping as status so switching a pending candidate to confirmed is a single integer copy."
+  - "candidate_status_at captures when the pending candidate was first seen — invaluable during debugging a site stuck in pending state."
+
+deviations_from_plan: >
+  Drifted spec/rails_helper.rb to include ActiveSupport::Testing::TimeHelpers.
+  The "does not persist" spec uses travel_to to observe updated_at not changing.
+  No other test file in the project needed time helpers yet; this slice is the
+  first legitimate consumer, so the inclusion is minimal and scoped to tests.
+
+trade_offs: >
+  Considered tracking debounce via a CheckResult `derived_status` column and
+  having AlertDispatcher re-derive from the last N rows. Rejected: couples
+  the dispatcher to PerformCheckJob#derive_status's internal logic. The
+  Site-level candidate is one column, one method, zero cross-module coupling,
+  and makes the rule visible on the record (operators can see candidate_status
+  in the console).
+
+  The trade-off: a brand-new Site stays in :unknown for one extra check cycle.
+  First check: candidate=:up, status=:unknown (returned). Second check: commit.
+  Accepted — the UI shows "unknown" for ~30-60s longer on first run, no
+  alert-path impact.
+
+interfaces:
+  published:
+    - "Site#propose_status(new_status, now = Time.current) -> String"
+    - "Site#candidate_status -> String | nil"
+    - "Site#candidate_status_at -> ActiveSupport::TimeWithZone | nil"
+
+self_review:
+  consistency: "Pattern matches Epic 5's derive_status approach (reading + returning a string) but kept as an instance method since candidate state lives on the record."
+  metz: "propose_status is 16 lines with early returns — longer than Metz's 5-line ideal but each branch is a straight assignment. Splitting into 3 private methods would hide the tripartite decision tree."
+  tell_dont_ask: "Good — the method mutates internal state and returns the effective status. Caller never needs to inspect candidate_status to decide next action."
+
+principle_violations:
+  - rule: "Sandi Metz 5-line method rule"
+    location: "app/models/site.rb propose_status (16 lines)"
+    justification: "Straight-line 3-branch decision tree. Extracting helpers would add indirection without reducing cognitive load."
+    considered_alternatives:
+      - "A StatusProposer collaborator class — rejected as premature (one call site, trivial logic)."
+
+confidence: high
+reviewer_attention:
+  - "app/models/site.rb propose_status — walk the 3 branches against the spec's flap sequence to confirm the up→down→up→down→down case is handled correctly (it commits down on check 5, not 3 or 4)"
+  - "app/models/site.rb:13-17 — new candidate_status enum with prefix: :candidate and allow_nil: true; confirm no scope collision with status enum's `up` / `down` / `degraded` scopes"
