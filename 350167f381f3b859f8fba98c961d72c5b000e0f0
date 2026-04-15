@@ -1,0 +1,109 @@
+intent: >
+  Add the Slack concrete channel and retroactively fix a slice-4 mistake:
+  the Base/Email contract was missing the target: keyword, which made it
+  impossible to express "post to this specific webhook URL" without the
+  channel reaching back into the preference to discover the target. Also
+  teaches the mailer to honor a per-preference recipient override.
+
+slice: 5/11
+kind: feature
+behavior_change: additive
+
+reversibility: reversible
+
+scope:
+  declared:
+    - app/services/alert_channels/slack.rb
+    - spec/services/alert_channels/slack_spec.rb
+  actual:
+    - app/services/alert_channels/slack.rb
+    - spec/services/alert_channels/slack_spec.rb
+    - app/services/alert_channels/base.rb
+    - app/services/alert_channels/email.rb
+    - app/mailers/downtime_alert_mailer.rb
+    - spec/support/alert_channel_contract.rb
+    - spec/services/alert_channels/email_spec.rb
+    - spec/mailers/downtime_alert_mailer_spec.rb
+  drift:
+    - app/services/alert_channels/base.rb  # added target: keyword to the abstract signature
+    - app/services/alert_channels/email.rb  # accepts + uses target: instead of ignoring
+    - app/mailers/downtime_alert_mailer.rb  # optional params[:recipient] override
+    - spec/support/alert_channel_contract.rb  # contract now asserts 4-keyword signature (was 3)
+    - spec/services/alert_channels/email_spec.rb  # specs updated for the new signature
+    - spec/mailers/downtime_alert_mailer_spec.rb  # added coverage for the recipient override path
+
+proof:
+  tests_run: bin/dc bundle exec rspec
+  result: green
+  failing: 0
+
+tests:
+  needed: "yes"
+  added:
+    - spec/services/alert_channels/slack_spec.rb
+    - spec/support/alert_channel_contract.rb  # contract tightening
+    - spec/services/alert_channels/email_spec.rb  # signature update
+    - spec/mailers/downtime_alert_mailer_spec.rb  # recipient override coverage
+
+lint:
+  run: "(skipped — no linter wired)"
+  result: skipped
+  count: 0
+  rationale: "No rubocop/standard/etc. configured."
+
+assumptions:
+  - "WebMock's stub_request + JSON body matching is the idiomatic way to assert payload shape without spinning up a real Slack mock server."
+  - "SsrfGuard's IpGuard list blocks 127.0.0.1 — verified at Epic 4, tested here for regression coverage."
+
+specifications:
+  - "Slack channel uses a locked payload contract: `text` key always present with '[dorm-guard] <name> is <event>' phrasing; `blocks` is additive-only."
+  - "Slack POSTs go through Faraday with SsrfGuard middleware + 5s open_timeout / 10s read_timeout. Matches HttpChecker's construction exactly."
+  - "All channels now take a target: keyword. Email reads it as a recipient email; Slack and Webhook read it as the webhook URL."
+  - "DowntimeAlertMailer#recipient prefers params[:recipient] over ENV['DORM_GUARD_ALERT_TO'] over the hardcoded default — preserving existing Epic 3 behavior when no per-preference recipient is passed."
+
+deviations_from_plan: >
+  Slice 5's declared scope was "Slack channel only." Actual scope extended into
+  slice 4's files (Base, Email, mailer, contract, email spec, mailer spec) to
+  retrofit the missing `target:` keyword. Slice 4 shipped with a 3-keyword
+  deliver() signature (`site:, event:, check_result:`) that could not express
+  which webhook URL to POST to for Slack/Webhook. Making Slack introduce the
+  4th keyword unilaterally would have broken the shared contract. This slice
+  brings all channels into alignment in a single atomic commit.
+
+  Single failure domain preserved: "the Slack channel delivers correctly AND
+  every channel now speaks the same 4-keyword contract." Splitting into
+  5a (contract fix) + 5b (Slack) would have left 5a as a pure refactor with
+  no behavioral difference, which is ceremony without payoff.
+
+trade_offs: >
+  Could have kept Email ignoring `target:` (accepted but unused). Rejected
+  because it hides the per-preference recipient from the email path — users
+  configuring Epic 6 for the first time would expect their Slack prefs AND
+  their email prefs to respect the target they typed in. Email now honors
+  the override while falling back to ENV+default when not provided, so
+  Epic 3's single-recipient mode still works in isolation.
+
+  Faraday connection is built per-call rather than memoized at the class
+  level. Per-call is ~1ms overhead and avoids thread-safety questions about
+  reusing a Faraday connection across jobs. Same posture as HttpChecker.
+
+interfaces:
+  consumed:
+    - "SsrfGuard (Faraday middleware) from Epic 4"
+    - "Faraday::Connection#post"
+  published:
+    - "AlertChannels::Slack#deliver(site:, event:, check_result:, target:) -> true"
+    - "Every concrete channel's #deliver(site:, event:, check_result:, target:) -> truthy (new signature)"
+
+self_review:
+  consistency: "Faraday construction mirrors HttpChecker#connection exactly (ssrf_guard, timeouts, no redirect middleware since webhooks don't redirect)."
+  metz: "Slack class is 50 lines; deliver is 10 lines, build_payload is 12 lines (mostly data). Compliant."
+  security: "SsrfGuard is the load-bearing defense — tested explicitly with 127.0.0.1 to lock in the behavior."
+  goos: "Test stubs webmock at the HTTP boundary, which is what the channel talks to. No mocking of types we don't own."
+
+confidence: medium  # drift into slice-4 files reduces confidence vs. a clean single-domain slice
+
+reviewer_attention:
+  - "app/services/alert_channels/slack.rb build_payload — the locked `text` phrasing ('<name> is <event>') is what mobile clients display; any future edit here is operator-visible"
+  - "app/mailers/downtime_alert_mailer.rb:22-25 — the three-level fallback (params[:recipient] → ENV → hardcoded default) is easy to misread; confirm the precedence matches what you want"
+  - "The slice-4 drift (6 files from slice 4 touched again) — if you prefer, I can split the next contract-affecting change differently; this one felt atomic enough to commit together"
