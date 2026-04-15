@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_04_15_001502) do
+ActiveRecord::Schema[8.1].define(version: 2026_04_15_001849) do
   create_table "check_results", force: :cascade do |t|
     t.datetime "checked_at", null: false
     t.datetime "created_at", null: false
@@ -42,6 +42,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_04_15_001502) do
     t.integer "interval_seconds", null: false
     t.datetime "last_checked_at"
     t.string "name", null: false
+    t.integer "slow_threshold_ms"
     t.integer "status", default: 0, null: false
     t.integer "tcp_port"
     t.integer "tls_port"

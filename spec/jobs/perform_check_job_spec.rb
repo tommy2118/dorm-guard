@@ -97,6 +97,106 @@ RSpec.describe PerformCheckJob, type: :job do
       end
     end
 
+    context "when an SSL site's result carries metadata[:classification]" do
+      let(:ssl_site) do
+        Site.create!(
+          name: "Secure site",
+          url: "https://example.com",
+          interval_seconds: 60,
+          check_type: :ssl,
+          tls_port: 443
+        )
+      end
+
+      before { allow(CheckDispatcher).to receive(:call).with(ssl_site).and_return(classified_result) }
+
+      context "with classification :degraded" do
+        let(:classified_result) do
+          CheckOutcome.new(
+            status_code: nil,
+            response_time_ms: 120,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: { cert_not_after: Time.current + 20 * 86_400, classification: :degraded }
+          )
+        end
+
+        it "transitions the site to :degraded" do
+          described_class.perform_now(ssl_site.id)
+          expect(ssl_site.reload).to be_degraded
+        end
+      end
+
+      context "with classification :up" do
+        let(:classified_result) do
+          CheckOutcome.new(
+            status_code: nil,
+            response_time_ms: 120,
+            error_message: nil,
+            checked_at: checked_at,
+            body: nil,
+            metadata: { cert_not_after: Time.current + 60 * 86_400, classification: :up }
+          )
+        end
+
+        it "transitions the site to :up" do
+          described_class.perform_now(ssl_site.id)
+          expect(ssl_site.reload).to be_up
+        end
+      end
+    end
+
+    context "when an HTTP site's response exceeds slow_threshold_ms" do
+      let(:site) do
+        Site.create!(
+          name: "Slow API", url: "https://example.com",
+          interval_seconds: 60, slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 1200,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "transitions the site to :degraded" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_degraded
+      end
+    end
+
+    context "when an HTTP site's response is faster than slow_threshold_ms" do
+      let(:site) do
+        Site.create!(
+          name: "Fast API", url: "https://example.com",
+          interval_seconds: 60, slow_threshold_ms: 500
+        )
+      end
+
+      let(:result) do
+        CheckOutcome.new(
+          status_code: 200,
+          response_time_ms: 100,
+          error_message: nil,
+          checked_at: checked_at,
+          body: nil,
+          metadata: {}
+        )
+      end
+
+      it "keeps the site :up" do
+        described_class.perform_now(site.id)
+        expect(site.reload).to be_up
+      end
+    end
+
     context "when the site has expected_status_codes set" do
       let(:site) do
         Site.create!(

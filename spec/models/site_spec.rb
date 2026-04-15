@@ -160,6 +160,47 @@ RSpec.describe Site, type: :model do
     end
   end
 
+  describe "slow_threshold_ms validation" do
+    it "is valid when nil (no threshold)" do
+      expect(described_class.new(valid_attrs.merge(slow_threshold_ms: nil))).to be_valid
+    end
+
+    it "is valid with an integer in the allowed range" do
+      expect(described_class.new(valid_attrs.merge(slow_threshold_ms: 500))).to be_valid
+    end
+
+    it "rejects a value below the range minimum (< 100)" do
+      expect(described_class.new(valid_attrs.merge(slow_threshold_ms: 50))).not_to be_valid
+    end
+
+    it "rejects a value above the range maximum (> 60000)" do
+      expect(described_class.new(valid_attrs.merge(slow_threshold_ms: 70_000))).not_to be_valid
+    end
+
+    it "is nulled by clear_irrelevant_config when check_type flips to :tcp" do
+      site = described_class.create!(valid_attrs.merge(slow_threshold_ms: 500))
+      site.update!(check_type: :tcp, tcp_port: 22)
+      expect(site.reload.slow_threshold_ms).to be_nil
+    end
+
+    it "is nulled by clear_irrelevant_config when check_type flips to :ssl" do
+      site = described_class.create!(valid_attrs.merge(slow_threshold_ms: 500))
+      site.update!(check_type: :ssl, tls_port: 443)
+      expect(site.reload.slow_threshold_ms).to be_nil
+    end
+
+    it "is preserved for :content_match sites" do
+      site = described_class.create!(
+        valid_attrs.merge(
+          check_type: :content_match,
+          content_match_pattern: "ok",
+          slow_threshold_ms: 500
+        )
+      )
+      expect(site.reload.slow_threshold_ms).to eq(500)
+    end
+  end
+
   describe "expected_status_codes parsing + validation" do
     it "stores nil for a blank string" do
       site = described_class.new(valid_attrs.merge(expected_status_codes: ""))

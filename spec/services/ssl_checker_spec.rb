@@ -27,13 +27,15 @@ RSpec.describe SslChecker do
   end
 
   describe ".check" do
-    context "with a cert expiring well beyond the critical floor" do
-      # 90 days + a small buffer so the Float->Integer floor in
-      # days_until_expiry can't drift below 90 during test execution.
+    context "with a cert well beyond the warn window (>30 days)" do
       let(:cert) { fake_cert(not_after: Time.current + 90 * 86_400 + 3600) }
       before { stub_handshake(cert) }
 
-      it "returns a CheckOutcome with no error_message (:up via job classification)" do
+      it "returns classification :up in metadata" do
+        expect(described_class.check(host: host, port: port).metadata[:classification]).to eq(:up)
+      end
+
+      it "leaves error_message nil" do
         expect(described_class.check(host: host, port: port).error_message).to be_nil
       end
 
@@ -45,15 +47,41 @@ RSpec.describe SslChecker do
       end
     end
 
-    context "with a cert under the critical floor" do
+    context "with a cert in the warn window (8..30 days)" do
+      let(:cert) { fake_cert(not_after: Time.current + 20 * 86_400 + 3600) }
+      before { stub_handshake(cert) }
+
+      it "returns classification :degraded in metadata" do
+        expect(described_class.check(host: host, port: port).metadata[:classification]).to eq(:degraded)
+      end
+
+      it "leaves error_message nil (the degraded signal is in metadata)" do
+        expect(described_class.check(host: host, port: port).error_message).to be_nil
+      end
+    end
+
+    context "with a cert exactly at the warn boundary (30 days)" do
+      let(:cert) { fake_cert(not_after: Time.current + 30 * 86_400 + 3600) }
+      before { stub_handshake(cert) }
+
+      it "returns classification :degraded (30 < WARN_DAYS boundary)" do
+        expect(described_class.check(host: host, port: port).metadata[:classification]).to eq(:degraded)
+      end
+    end
+
+    context "with a cert under the critical floor (<8 days)" do
       let(:cert) { fake_cert(not_after: Time.current + 6 * 86_400 + 3600) }
       before { stub_handshake(cert) }
 
-      it "returns a CheckOutcome with an error_message (:down)" do
+      it "returns classification :down in metadata" do
+        expect(described_class.check(host: host, port: port).metadata[:classification]).to eq(:down)
+      end
+
+      it "sets error_message with the days count" do
         expect(described_class.check(host: host, port: port).error_message).to match(/expires in \d+ days/)
       end
 
-      it "still populates cert metadata so the reason is visible" do
+      it "still populates days_until_expiry in metadata" do
         expect(described_class.check(host: host, port: port).metadata[:days_until_expiry]).to eq(6)
       end
     end

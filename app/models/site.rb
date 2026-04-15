@@ -4,6 +4,7 @@ class Site < ApplicationRecord
   DEFAULT_TCP_PORT = 80
   CONTENT_MATCH_PATTERN_MAX = 500
   HTTP_STATUS_RANGE = 100..599
+  SLOW_THRESHOLD_RANGE = 100..60_000
 
   DNS_HOSTNAME_REGEX = /\A[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\z/i
 
@@ -46,6 +47,9 @@ class Site < ApplicationRecord
             presence: true,
             length: { maximum: CONTENT_MATCH_PATTERN_MAX },
             if: :content_match?
+  validates :slow_threshold_ms,
+            numericality: { only_integer: true, in: SLOW_THRESHOLD_RANGE },
+            allow_nil: true
 
   validate :validate_expected_status_codes
 
@@ -110,6 +114,7 @@ class Site < ApplicationRecord
     self.tcp_port = nil unless tcp?
     self.dns_hostname = nil unless dns?
     self.content_match_pattern = nil unless content_match?
+    self.slow_threshold_ms = nil unless http? || content_match?
     self.url = nil if dns?
   end
 end

@@ -18,3 +18,18 @@
     <p class="mt-1 text-sm text-error"><%= msg %></p>
   <% end %>
 </div>
+
+<div class="form-control">
+  <%= form.label :slow_threshold_ms, "Slow-response threshold (ms)", class: "label label-text font-medium" %>
+  <%= form.number_field :slow_threshold_ms,
+        min: 100,
+        max: 60_000,
+        placeholder: "e.g. 1000",
+        class: "input input-bordered w-full#{' input-error' if field_error(:slow_threshold_ms)}" %>
+  <p class="mt-1 text-sm text-base-content/70">
+    Sites slower than this report as degraded (yellow). Leave blank to skip.
+  </p>
+  <% if (msg = field_error(:slow_threshold_ms)) %>
+    <p class="mt-1 text-sm text-error"><%= msg %></p>
+  <% end %>
+</div>
