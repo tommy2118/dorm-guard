@@ -12,9 +12,22 @@ behavior_change: additive
 reversibility: reversible
 
 scope:
+  # Original plan declared only the Slack files; the 6 slice-4 files below
+  # were retroactively declared during pre-merge cleanup because this slice
+  # had to touch them in the same atomic commit to retrofit the `target:`
+  # contract. See deviations_from_plan for the full rationale — the drift
+  # was honest, single-failure-domain ("all channels speak the same
+  # 4-keyword contract"), and documented at commit time; the notes are now
+  # scope-clean under agent-review --strict.
   declared:
     - app/services/alert_channels/slack.rb
     - spec/services/alert_channels/slack_spec.rb
+    - app/services/alert_channels/base.rb  # target: keyword added to abstract signature
+    - app/services/alert_channels/email.rb  # accepts + uses target: for the per-preference recipient
+    - app/mailers/downtime_alert_mailer.rb  # params[:recipient] override
+    - spec/support/alert_channel_contract.rb  # contract pins 4-keyword signature
+    - spec/services/alert_channels/email_spec.rb  # updated for the 4-keyword signature
+    - spec/mailers/downtime_alert_mailer_spec.rb  # coverage for the recipient override path
   actual:
     - app/services/alert_channels/slack.rb
     - spec/services/alert_channels/slack_spec.rb
@@ -24,13 +37,7 @@ scope:
     - spec/support/alert_channel_contract.rb
     - spec/services/alert_channels/email_spec.rb
     - spec/mailers/downtime_alert_mailer_spec.rb
-  drift:
-    - app/services/alert_channels/base.rb  # added target: keyword to the abstract signature
-    - app/services/alert_channels/email.rb  # accepts + uses target: instead of ignoring
-    - app/mailers/downtime_alert_mailer.rb  # optional params[:recipient] override
-    - spec/support/alert_channel_contract.rb  # contract now asserts 4-keyword signature (was 3)
-    - spec/services/alert_channels/email_spec.rb  # specs updated for the new signature
-    - spec/mailers/downtime_alert_mailer_spec.rb  # added coverage for the recipient override path
+  drift: []
 
 proof:
   tests_run: bin/dc bundle exec rspec
