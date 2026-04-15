@@ -20,6 +20,13 @@ RSpec.describe PerformCheckJob, type: :job do
     allow(CheckDispatcher).to receive(:call).with(site).and_return(result)
   end
 
+  # The N=2 debounce introduced in Slice 3 requires two consecutive same-status
+  # checks before Site#status commits. Use this helper wherever a test is
+  # asserting the CONFIRMED status after a transition.
+  def run_until_confirmed(target_site = site)
+    2.times { described_class.perform_now(target_site.id) }
+  end
+
   describe "#perform" do
     it "creates a CheckResult from the dispatched checker response" do
       expect { described_class.perform_now(site.id) }.to change(CheckResult, :count).by(1)
@@ -38,7 +45,7 @@ RSpec.describe PerformCheckJob, type: :job do
 
     context "when the check returns 2xx" do
       it "marks the site as up" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_up
       end
     end
@@ -56,7 +63,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as up" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_up
       end
     end
@@ -74,7 +81,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as down" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_down
       end
     end
@@ -92,7 +99,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as down" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_down
       end
     end
@@ -123,7 +130,7 @@ RSpec.describe PerformCheckJob, type: :job do
         end
 
         it "transitions the site to :degraded" do
-          described_class.perform_now(ssl_site.id)
+          run_until_confirmed(ssl_site)
           expect(ssl_site.reload).to be_degraded
         end
       end
@@ -141,7 +148,7 @@ RSpec.describe PerformCheckJob, type: :job do
         end
 
         it "transitions the site to :up" do
-          described_class.perform_now(ssl_site.id)
+          run_until_confirmed(ssl_site)
           expect(ssl_site.reload).to be_up
         end
       end
@@ -167,7 +174,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "transitions the site to :degraded" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_degraded
       end
     end
@@ -192,7 +199,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "keeps the site :up" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_up
       end
     end
@@ -218,7 +225,7 @@ RSpec.describe PerformCheckJob, type: :job do
         end
 
         it "marks the site as up" do
-          described_class.perform_now(site.id)
+          run_until_confirmed
           expect(site.reload).to be_up
         end
       end
@@ -236,7 +243,7 @@ RSpec.describe PerformCheckJob, type: :job do
         end
 
         it "marks the site as down (allowlist is an override, not an addition)" do
-          described_class.perform_now(site.id)
+          run_until_confirmed
           expect(site.reload).to be_down
         end
       end
@@ -268,7 +275,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "downgrades allowlist-success to :degraded on slow response" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_degraded
       end
     end
@@ -296,7 +303,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "stays :down — failure trumps slowness" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_down
       end
     end
@@ -314,7 +321,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as down even though HTTP returned 200" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_down
       end
     end
@@ -332,7 +339,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as up" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_up
       end
     end
@@ -350,7 +357,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as up (nil status_code + nil error_message = success for non-HTTP)" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_up
       end
     end
@@ -368,7 +375,7 @@ RSpec.describe PerformCheckJob, type: :job do
       end
 
       it "marks the site as down" do
-        described_class.perform_now(site.id)
+        run_until_confirmed
         expect(site.reload).to be_down
       end
 
@@ -384,7 +391,7 @@ RSpec.describe PerformCheckJob, type: :job do
     end
   end
 
-  describe "downtime alert dispatch" do
+  describe "AlertDispatcher integration" do
     let(:down_result) do
       CheckOutcome.new(
         status_code: 503,
@@ -406,93 +413,87 @@ RSpec.describe PerformCheckJob, type: :job do
       )
     end
 
-    context "when status flips from unknown to down (first ever check)" do
-      before { allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result) }
-
-      it "enqueues a DowntimeAlertMailer.site_down delivery for the site" do
-        expect { described_class.perform_now(site.id) }
-          .to have_enqueued_mail(DowntimeAlertMailer, :site_down).with(params: { site: site }, args: [])
-      end
-    end
-
-    context "when status flips from up to down" do
+    context "when the debounce confirms a up → down transition (after 2 consecutive checks)" do
       before do
         site.update!(status: :up)
         allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
       end
 
-      it "enqueues a DowntimeAlertMailer.site_down delivery" do
-        expect { described_class.perform_now(site.id) }
-          .to have_enqueued_mail(DowntimeAlertMailer, :site_down).with(params: { site: site }, args: [])
+      it "invokes AlertDispatcher with from: 'up' and to: 'down' on the committing check" do
+        described_class.perform_now(site.id)  # stashes candidate=down
+        expect(AlertDispatcher).to receive(:call).with(
+          hash_including(site: site, from: "up", to: "down")
+        )
+        described_class.perform_now(site.id)  # commits → dispatcher fires
       end
     end
 
-    context "when the site was already down (down→down)" do
-      before do
-        site.update!(status: :down)
-        allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
-      end
-
-      it "does NOT enqueue another alert (no spam)" do
-        expect { described_class.perform_now(site.id) }
-          .not_to have_enqueued_mail(DowntimeAlertMailer)
-      end
-    end
-
-    context "when status flips from down to up (recovery)" do
+    context "when the debounce confirms a down → up transition (after 2 consecutive checks)" do
       before do
         site.update!(status: :down)
         allow(CheckDispatcher).to receive(:call).with(site).and_return(up_result)
       end
 
-      it "does NOT enqueue an alert (no recovery emails in this slice)" do
-        expect { described_class.perform_now(site.id) }
-          .not_to have_enqueued_mail(DowntimeAlertMailer)
+      it "invokes AlertDispatcher with from: 'down' and to: 'up' on the committing check" do
+        described_class.perform_now(site.id)  # stashes candidate=up
+        expect(AlertDispatcher).to receive(:call).with(
+          hash_including(site: site, from: "down", to: "up")
+        )
+        described_class.perform_now(site.id)  # commits → dispatcher fires
       end
     end
 
-    context "when status flips to :degraded (not :down)" do
-      let(:degraded_http_result) do
-        CheckOutcome.new(
-          status_code: 200,
-          response_time_ms: 5000,
-          error_message: nil,
-          checked_at: Time.current,
-          body: nil,
-          metadata: {}
+    context "when the debounce confirms a up → degraded transition" do
+      before do
+        site.update!(status: :up, slow_threshold_ms: 500)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(
+          CheckOutcome.new(
+            status_code: 200,
+            response_time_ms: 5000,
+            error_message: nil,
+            checked_at: Time.current,
+            body: nil,
+            metadata: {}
+          )
         )
       end
 
-      before do
-        site.update!(status: :up)
-        # Force derive_status to return :degraded by stubbing it directly —
-        # Slice 9 doesn't yet emit :degraded from any checker, so we simulate
-        # the Slice 10 outcome to assert Slice 9's alert guard.
-        allow_any_instance_of(described_class)
-          .to receive(:derive_status).and_return(:degraded)
-        allow(CheckDispatcher).to receive(:call).with(site).and_return(degraded_http_result)
-      end
-
-      it "transitions the site to :degraded" do
+      it "invokes AlertDispatcher with from: 'up' and to: 'degraded' on the committing check" do
         described_class.perform_now(site.id)
-        expect(site.reload).to be_degraded
-      end
-
-      it "does NOT enqueue a downtime alert (degraded is neither failing nor healthy)" do
-        expect { described_class.perform_now(site.id) }
-          .not_to have_enqueued_mail(DowntimeAlertMailer)
+        expect(AlertDispatcher).to receive(:call).with(
+          hash_including(site: site, from: "up", to: "degraded")
+        )
+        described_class.perform_now(site.id)
       end
     end
 
-    context "when the site stays up (up→up)" do
+    context "when a single-check blip does NOT commit a status change" do
+      before do
+        site.update!(status: :up)
+        allow(CheckDispatcher).to receive(:call).with(site).and_return(down_result)
+      end
+
+      it "invokes AlertDispatcher with from: 'up' and to: 'up' (the debounce stash) — no event" do
+        # The first check stashes candidate=:down but does NOT commit status. The
+        # dispatcher sees up → up and returns early without dispatching anything.
+        expect(AlertDispatcher).to receive(:call).with(
+          hash_including(site: site, from: "up", to: "up")
+        )
+        described_class.perform_now(site.id)
+      end
+    end
+
+    context "when the site stays :up (up → up, stable)" do
       before do
         site.update!(status: :up)
         allow(CheckDispatcher).to receive(:call).with(site).and_return(up_result)
       end
 
-      it "does NOT enqueue an alert" do
-        expect { described_class.perform_now(site.id) }
-          .not_to have_enqueued_mail(DowntimeAlertMailer)
+      it "invokes AlertDispatcher with from: 'up' and to: 'up' (a no-alert transition)" do
+        expect(AlertDispatcher).to receive(:call).with(
+          hash_including(site: site, from: "up", to: "up")
+        )
+        described_class.perform_now(site.id)
       end
     end
   end

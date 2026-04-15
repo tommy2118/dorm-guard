@@ -49,18 +49,18 @@ RSpec.describe "Epic 5 check types smoke", type: :request do
       expect(site.check_type).to eq(check_type.to_s)
       expect(site.status).to eq("unknown")
 
-      # Happy path: job run → :up
+      # Happy path: job run → :up (2 consecutive checks confirm under slice 3 debounce)
       allow(checker_class).to receive(:check).and_return(happy)
-      PerformCheckJob.perform_now(site.id)
+      2.times { PerformCheckJob.perform_now(site.id) }
       expect(site.reload.status).to eq("up")
 
       # Index renders the "up" badge
       get sites_path
       expect(response.body).to include("badge-success")
 
-      # Sad path: same site, job re-run with failing stub → :down
+      # Sad path: same site, job re-run with failing stub → :down (again, 2 consecutive checks)
       allow(checker_class).to receive(:check).and_return(failing_outcome("#{check_type} failed"))
-      PerformCheckJob.perform_now(site.id)
+      2.times { PerformCheckJob.perform_now(site.id) }
       expect(site.reload.status).to eq("down")
 
       get sites_path
