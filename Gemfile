@@ -43,7 +43,7 @@ gem "image_processing", "~> 1.2"
 # Outbound HTTP client for HttpChecker and any future external integrations.
 # Preferred over stdlib Net::HTTP for middleware support (retries, logging,
 # instrumentation), pluggable adapters, and a narrower exception hierarchy.
-gem "faraday", "~> 2.0"
+gem "faraday", "~> 2.14"
 
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
